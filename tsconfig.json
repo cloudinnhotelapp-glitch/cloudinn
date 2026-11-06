@@ -1,0 +1,18 @@
+// Shared TypeScript base settings that each workspace package extends; it compiles nothing by itself.
+{
+  "compilerOptions": {
+    // Strict type checking for all packages.
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Interop and speed settings common to every package.
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true
+  },
+  // Empty file list so running tsc at the root does not compile any app by accident.
+  "files": []
+}

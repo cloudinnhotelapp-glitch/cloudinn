@@ -1,0 +1,10 @@
+{
+  "//": "NestJS CLI settings: where source code lives and how 'nest build' compiles it.",
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true,
+    "tsConfigPath": "tsconfig.build.json"
+  }
+}

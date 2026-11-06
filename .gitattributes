@@ -1,0 +1,8 @@
+# Normalizes line endings in Git so Windows and other systems share identical files.
+* text=auto eol=lf
+
+# Binary files must never be converted.
+*.pdf binary
+*.png binary
+*.ico binary
+*.jpg binary

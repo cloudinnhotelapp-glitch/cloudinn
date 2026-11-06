@@ -1,0 +1,30 @@
+{
+  "//": "Root workspace manifest: holds shared tooling scripts for the whole monorepo. JSON has no comment syntax, so '//' keys are used as comments.",
+  "name": "hotel-management-saas",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.34.0 <11"
+  },
+  "//scripts": "Run the apps locally, build everything, or run checks. The shared package is built once after install (and by build:shared after editing it), never concurrently.",
+  "scripts": {
+    "postinstall": "pnpm build:shared",
+    "build:shared": "pnpm --filter @hms/shared build",
+    "dev": "pnpm --parallel --filter @hms/api --filter @hms/web dev",
+    "dev:api": "pnpm --filter @hms/api dev",
+    "dev:web": "pnpm --filter @hms/web dev",
+    "build": "pnpm build:shared && pnpm --filter @hms/api build && pnpm --filter @hms/web build",
+    "typecheck": "pnpm build:shared && pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm build:shared && pnpm -r test",
+    "test:ui": "pnpm build && pnpm --filter @hms/web test:ui",
+    "db:generate": "pnpm --filter @hms/api prisma:generate",
+    "db:validate": "pnpm --filter @hms/api prisma:validate",
+    "db:migrate:create": "pnpm --filter @hms/api prisma:migrate:create",
+    "db:migrate:deploy": "pnpm --filter @hms/api prisma:migrate:deploy",
+    "db:migrate:status": "pnpm --filter @hms/api prisma:migrate:status",
+    "db:seed": "pnpm --filter @hms/api prisma:seed"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "//": "Next.js (App Router) frontend for Super Admins and business users.",
+  "name": "@hms/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//scripts": "Run the dev server on port 3000, build, start the built app, type-check, lint, and run browser tests (test:ui needs a prior build and free ports 3000/4000).",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint .",
+    "test": "echo \"@hms/web: browser tests run separately with test:ui\"",
+    "test:ui": "playwright test"
+  },
+  "dependencies": {
+    "@hms/shared": "workspace:*",
+    "material-symbols": "0.48.2",
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/turbopack": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.3",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3"
+  }
+}

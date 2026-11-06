@@ -1,0 +1,23 @@
+{
+  "//": "Shared constants and types used by both the web app and the API. Built to dist/ so both apps import plain JavaScript.",
+  "name": "@hms/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "//scripts": "Compile the package, or only type-check it.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "echo \"@hms/shared: no tests yet\""
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,2 @@
+// Re-exports the shared dashboard summary card and panel (moved to components/ui so the Super Admin dashboard can use them too).
+export { Panel, SummaryCard, type SummaryCardProps } from '@/components/ui/summary-card';

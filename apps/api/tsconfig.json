@@ -1,0 +1,28 @@
+// TypeScript settings for the NestJS API (used by the editor, type-checking, and tests).
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // Native Node.js ESM, as required by NestJS 12.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "resolvePackageJsonExports": true,
+    "target": "ES2023",
+
+    // NestJS dependency injection relies on legacy decorators and their type metadata.
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "strictPropertyInitialization": false,
+
+    // Build output settings.
+    "declaration": true,
+    "removeComments": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "incremental": true,
+
+    // Global type definitions for Node.js and Vitest test helpers.
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["src", "test", "scripts", "prisma/seed.ts", "prisma.config.ts", "vitest.config.ts", "vitest.config.e2e.ts"]
+}

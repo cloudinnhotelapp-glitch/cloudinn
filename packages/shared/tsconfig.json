@@ -1,0 +1,17 @@
+// Compiler settings for the shared package: emits ESM JavaScript plus type declarations into dist/.
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // Native Node.js ESM output that both NestJS and Next.js can import.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2023",
+
+    // Output location and declaration files for consumers.
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src"]
+}

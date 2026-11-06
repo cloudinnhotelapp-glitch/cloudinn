@@ -1,0 +1,866 @@
+// Prisma schema for CloudInn (the hotel management SaaS): the single source of truth for database tables (Version 1).
+//
+// Tenant isolation rule used throughout: every location-scoped table stores businessId and locationId and has a
+// composite foreign key (locationId, businessId) -> locations(id, businessId). Child rows point to parents with
+// (parentId, locationId) composite keys, so PostgreSQL itself rejects any row that mixes businesses or locations.
+// Constraints Prisma cannot express (exclusion constraint, CHECKs, triggers) live in raw SQL migrations.
+
+// Generates the type-safe Prisma Client as ESM TypeScript inside src/generated/prisma.
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+// Connects to PostgreSQL; the connection URL is supplied by prisma.config.ts, never hard-coded here.
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+/// Whether a Super Admin account may log in.
+enum SuperAdminStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// How strongly a session was authenticated; V1 uses passwords only, so TOTP can be added later without redesign.
+enum SessionAuthLevel {
+  PASSWORD
+}
+
+/// Lifecycle of a business (tenant); a suspended business cannot log in or operate, but keeps all its data.
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+/// Whether a location is in operation.
+enum LocationStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// The one fixed role a business user has.
+enum BusinessUserRole {
+  ADMIN
+  MANAGER
+  RECEPTIONIST
+}
+
+/// Whether a business user may log in.
+enum BusinessUserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Whether a room can be sold at all (maintenance tracking is a separate V2 feature).
+enum RoomOperationalStatus {
+  ACTIVE
+  OUT_OF_SERVICE
+  INACTIVE
+}
+
+/// Whether a guest currently occupies a room.
+enum RoomOccupancyStatus {
+  VACANT
+  OCCUPIED
+}
+
+/// Cleanliness of a room, tracked separately from occupancy.
+enum RoomHousekeepingStatus {
+  CLEAN
+  DIRTY
+  CLEANING
+}
+
+/// Overall state of a reservation.
+enum ReservationStatus {
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+/// State of one room inside a reservation; only RESERVED and CHECKED_IN block the room's availability.
+enum ReservationRoomStatus {
+  RESERVED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+/// State of a stay (from check-in to checkout).
+enum StayStatus {
+  IN_HOUSE
+  CHECKED_OUT
+}
+
+/// State of a bill; finalized bills are not changed (corrections use reversal entries).
+enum BillStatus {
+  OPEN
+  FINALIZED
+}
+
+/// Kind of line on a bill.
+enum ChargeType {
+  ROOM
+  EXTRA_BED
+  TAX
+  ADDITIONAL
+}
+
+/// How a payment was received (recorded only; there is no payment gateway).
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+  OTHER
+}
+
+/// A normal payment entry, or a reversal that cancels an earlier one (payments are never edited or deleted).
+enum PaymentEntryType {
+  PAYMENT
+  REVERSAL
+}
+
+/// Progress of a housekeeping task.
+enum HousekeepingTaskStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+}
+
+/// What created a housekeeping task.
+enum HousekeepingTaskSource {
+  CHECKOUT
+  MANUAL
+}
+
+/// Who performed an audited action.
+enum AuditActorType {
+  SUPER_ADMIN
+  BUSINESS_USER
+  SYSTEM
+}
+
+/// Which human-readable number a sequence produces.
+enum NumberSequenceKind {
+  RESERVATION
+  GRC
+  BILL
+}
+
+/// Type of identity document a guest provides.
+enum GuestDocumentType {
+  PASSPORT
+  NATIONAL_ID
+  DRIVING_LICENSE
+  VISA
+  OTHER
+}
+
+// ───────────────────────────── Platform ─────────────────────────────
+
+/// Stores one platform Super Admin account (created only by the seed; there is no sign-up UI).
+model SuperAdmin {
+  id                 String           @id @default(uuid(7)) @db.Uuid
+  /// Always stored in lowercase (enforced by a CHECK constraint).
+  email              String           @unique @db.VarChar(254)
+  name               String           @db.VarChar(120)
+  /// Argon2id hash; the plaintext password is never stored.
+  passwordHash       String
+  status             SuperAdminStatus @default(ACTIVE)
+  /// True until the seeded temporary password has been changed.
+  mustChangePassword Boolean          @default(true)
+  passwordChangedAt  DateTime?        @db.Timestamptz(3)
+  failedLoginCount   Int              @default(0)
+  lockedUntil        DateTime?        @db.Timestamptz(3)
+  lastLoginAt        DateTime?        @db.Timestamptz(3)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(3)
+
+  sessions  SuperAdminSession[]
+  auditLogs AuditLog[]
+
+  @@map("super_admins")
+}
+
+/// Stores one Super Admin login session; kept separate from business-user sessions.
+model SuperAdminSession {
+  id            String           @id @default(uuid(7)) @db.Uuid
+  superAdminId  String           @db.Uuid
+  /// SHA-256 (hex) of the cookie token; the raw token is never stored.
+  tokenHash     String           @unique @db.Char(64)
+  authLevel     SessionAuthLevel @default(PASSWORD)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
+  /// Last request time, used for the idle timeout.
+  lastSeenAt    DateTime         @default(now()) @db.Timestamptz(3)
+  /// Absolute expiry, regardless of activity.
+  expiresAt     DateTime         @db.Timestamptz(3)
+  revokedAt     DateTime?        @db.Timestamptz(3)
+  revokedReason String?          @db.VarChar(40)
+  ipAddress     String?          @db.VarChar(45)
+  userAgent     String?          @db.VarChar(512)
+
+  superAdmin SuperAdmin @relation(fields: [superAdminId], references: [id], onDelete: Cascade)
+
+  @@index([superAdminId])
+  @@map("super_admin_sessions")
+}
+
+/// Stores one platform-wide setting as a key and JSON value.
+model PlatformSetting {
+  key       String   @id @db.VarChar(100)
+  value     Json
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("platform_settings")
+}
+
+// ───────────────────────────── Tenancy ─────────────────────────────
+
+/// Stores one business (hotel company), the top-level tenant that owns all its data.
+model Business {
+  id               String         @id @default(uuid(7)) @db.Uuid
+  name             String         @db.VarChar(160)
+  legalName        String?        @db.VarChar(200)
+  contactEmail     String?        @db.VarChar(254)
+  contactPhone     String?        @db.VarChar(40)
+  address          String?        @db.VarChar(500)
+  status           BusinessStatus @default(ACTIVE)
+  suspendedAt      DateTime?      @db.Timestamptz(3)
+  suspensionReason String?        @db.VarChar(500)
+  /// Set when the Super Admin deletes (archives) the business: it is suspended and hidden from normal lists, and all of
+  /// its records and audit history are kept. Businesses are never physically deleted.
+  archivedAt       DateTime?      @db.Timestamptz(3)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @db.Timestamptz(3)
+
+  locations Location[]
+  users     BusinessUser[]
+  guests    Guest[]
+  auditLogs AuditLog[]
+
+  @@index([status])
+  @@map("businesses")
+}
+
+/// Stores one hotel location (property) of a business, with its local time zone, currency, and tax rate.
+model Location {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  businessId     String         @db.Uuid
+  name           String         @db.VarChar(160)
+  /// Short code used in printed numbers such as GRC and bill numbers.
+  code           String         @db.VarChar(12)
+  address        String?        @db.VarChar(500)
+  phone          String?        @db.VarChar(40)
+  /// IANA time zone (for example "Asia/Kolkata") used for "today" in dashboards.
+  timezone       String         @db.VarChar(64)
+  /// ISO 4217 currency code (for example "INR").
+  currencyCode   String         @db.Char(3)
+  /// Configurable tax rate applied to taxable charges, as a percentage (0 to 100).
+  taxRatePercent Decimal        @default(0) @db.Decimal(5, 2)
+  status         LocationStatus @default(ACTIVE)
+  /// Set when the Super Admin deletes (archives) the location: it becomes inactive and is hidden from normal lists; its
+  /// property, reservation, billing, and audit records are kept. Locations are never physically deleted.
+  archivedAt     DateTime?      @db.Timestamptz(3)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  business          Business                 @relation(fields: [businessId], references: [id])
+  floors            Floor[]
+  roomTypes         RoomType[]
+  rooms             Room[]
+  userAssignments   UserLocationAssignment[]
+  activeSessions    BusinessUserSession[]
+  guestDocuments    GuestDocument[]
+  reservations      Reservation[]
+  reservationRooms  ReservationRoom[]
+  stays             Stay[]
+  registrationCards GuestRegistrationCard[]
+  numberSequences   NumberSequence[]
+  bills             Bill[]
+  charges           Charge[]
+  payments          Payment[]
+  cleaners          Cleaner[]
+  housekeepingTasks HousekeepingTask[]
+  auditLogs         AuditLog[]
+
+  @@unique([id, businessId])
+  @@unique([businessId, name])
+  @@unique([businessId, code])
+  @@index([businessId, status])
+  @@map("locations")
+}
+
+/// Stores one business user (Admin, Manager, or Receptionist) who belongs to exactly one business.
+model BusinessUser {
+  id                 String             @id @default(uuid(7)) @db.Uuid
+  businessId         String             @db.Uuid
+  /// Globally unique and always lowercase, because login has no business selector.
+  email              String             @unique @db.VarChar(254)
+  name               String             @db.VarChar(120)
+  /// Fixed role; the role chosen on the login page must match it.
+  role               BusinessUserRole
+  status             BusinessUserStatus @default(ACTIVE)
+  /// Argon2id hash; the plaintext password is never stored.
+  passwordHash       String
+  mustChangePassword Boolean            @default(true)
+  passwordChangedAt  DateTime?          @db.Timestamptz(3)
+  failedLoginCount   Int                @default(0)
+  lockedUntil        DateTime?          @db.Timestamptz(3)
+  lastLoginAt        DateTime?          @db.Timestamptz(3)
+  /// Set when the Super Admin deletes (archives) the user: the account is deactivated, its sessions end, and it is hidden
+  /// from normal lists; reservations, payments, and audit entries that name the user are kept.
+  archivedAt         DateTime?          @db.Timestamptz(3)
+  createdAt          DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
+
+  business               Business                 @relation(fields: [businessId], references: [id])
+  sessions               BusinessUserSession[]
+  locationAssignments    UserLocationAssignment[]
+  uploadedGuestDocuments GuestDocument[]
+  createdReservations    Reservation[]            @relation("ReservationCreatedBy")
+  cancelledReservations  Reservation[]            @relation("ReservationCancelledBy")
+  checkedInStays         Stay[]                   @relation("StayCheckedInBy")
+  checkedOutStays        Stay[]                   @relation("StayCheckedOutBy")
+  issuedRegistrations    GuestRegistrationCard[]
+  finalizedBills         Bill[]
+  createdCharges         Charge[]
+  recordedPayments       Payment[]
+  createdHousekeeping    HousekeepingTask[]
+  auditLogs              AuditLog[]
+
+  @@unique([id, businessId])
+  @@index([businessId, role])
+  @@map("business_users")
+}
+
+/// Links a business user to one location of the same business that they may work in.
+model UserLocationAssignment {
+  businessId String   @db.Uuid
+  userId     String   @db.Uuid
+  locationId String   @db.Uuid
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  /// Composite keys guarantee the user and the location belong to the same business.
+  user     BusinessUser @relation(fields: [userId, businessId], references: [id, businessId], onDelete: Cascade)
+  location Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+
+  @@id([userId, locationId])
+  @@index([locationId])
+  @@map("user_location_assignments")
+}
+
+/// Stores one business-user login session, including the currently selected location.
+model BusinessUserSession {
+  id               String           @id @default(uuid(7)) @db.Uuid
+  businessId       String           @db.Uuid
+  userId           String           @db.Uuid
+  /// SHA-256 (hex) of the cookie token; the raw token is never stored.
+  tokenHash        String           @unique @db.Char(64)
+  authLevel        SessionAuthLevel @default(PASSWORD)
+  /// Location chosen by the user; the server re-checks the assignment on every request.
+  activeLocationId String?          @db.Uuid
+  createdAt        DateTime         @default(now()) @db.Timestamptz(3)
+  lastSeenAt       DateTime         @default(now()) @db.Timestamptz(3)
+  expiresAt        DateTime         @db.Timestamptz(3)
+  revokedAt        DateTime?        @db.Timestamptz(3)
+  revokedReason    String?          @db.VarChar(40)
+  ipAddress        String?          @db.VarChar(45)
+  userAgent        String?          @db.VarChar(512)
+
+  user           BusinessUser @relation(fields: [userId, businessId], references: [id, businessId], onDelete: Cascade)
+  activeLocation Location?    @relation(fields: [activeLocationId], references: [id])
+
+  @@index([userId])
+  @@index([businessId])
+  @@map("business_user_sessions")
+}
+
+// ───────────────────────────── Property structure ─────────────────────────────
+
+/// Stores one floor of a location.
+model Floor {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  businessId String   @db.Uuid
+  locationId String   @db.Uuid
+  name       String   @db.VarChar(60)
+  /// Display order (for example 0 for ground floor).
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  location Location @relation(fields: [locationId, businessId], references: [id, businessId])
+  rooms    Room[]
+
+  @@unique([id, locationId])
+  @@unique([locationId, name])
+  @@map("floors")
+}
+
+/// Stores one room category of a location, with default capacity and rates for new rooms.
+model RoomType {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  businessId          String   @db.Uuid
+  locationId          String   @db.Uuid
+  name                String   @db.VarChar(80)
+  description         String?  @db.VarChar(500)
+  defaultCapacity     Int      @default(2)
+  defaultStandardRate Decimal  @db.Decimal(12, 2)
+  defaultExtraBedRate Decimal  @default(0) @db.Decimal(12, 2)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+
+  location Location @relation(fields: [locationId, businessId], references: [id, businessId])
+  rooms    Room[]
+
+  @@unique([id, locationId])
+  @@unique([locationId, name])
+  @@map("room_types")
+}
+
+/// Stores one room, with its rates and three separate states: operational, occupancy, and housekeeping.
+model Room {
+  id                 String                 @id @default(uuid(7)) @db.Uuid
+  businessId         String                 @db.Uuid
+  locationId         String                 @db.Uuid
+  floorId            String                 @db.Uuid
+  roomTypeId         String                 @db.Uuid
+  /// Room identifier, unique within its location (for example "101").
+  roomNumber         String                 @db.VarChar(20)
+  capacity           Int
+  maxExtraBeds       Int                    @default(0)
+  standardRate       Decimal                @db.Decimal(12, 2)
+  extraBedRate       Decimal                @default(0) @db.Decimal(12, 2)
+  operationalStatus  RoomOperationalStatus  @default(ACTIVE)
+  occupancyStatus    RoomOccupancyStatus    @default(VACANT)
+  housekeepingStatus RoomHousekeepingStatus @default(CLEAN)
+  notes              String?                @db.VarChar(500)
+  /// Set when the Super Admin deletes a room that has reservation, stay, or housekeeping history: the room becomes
+  /// inactive and is hidden from lists and the status board, and its history is kept. Rooms without history are deleted.
+  archivedAt         DateTime?              @db.Timestamptz(3)
+  createdAt          DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime               @updatedAt @db.Timestamptz(3)
+
+  /// Composite keys guarantee the floor and room type belong to the same location as the room.
+  location          Location           @relation(fields: [locationId, businessId], references: [id, businessId])
+  floor             Floor              @relation(fields: [floorId, locationId], references: [id, locationId])
+  roomType          RoomType           @relation(fields: [roomTypeId, locationId], references: [id, locationId])
+  reservationRooms  ReservationRoom[]
+  housekeepingTasks HousekeepingTask[]
+
+  @@unique([id, locationId])
+  @@unique([locationId, roomNumber])
+  @@index([locationId, operationalStatus])
+  @@map("rooms")
+}
+
+// ───────────────────────────── Guests ─────────────────────────────
+
+/// Stores one guest profile, shared by all locations of the same business.
+model Guest {
+  id               String             @id @default(uuid(7)) @db.Uuid
+  businessId       String             @db.Uuid
+  fullName         String             @db.VarChar(160)
+  email            String?            @db.VarChar(254)
+  phone            String?            @db.VarChar(40)
+  addressLine      String?            @db.VarChar(300)
+  city             String?            @db.VarChar(100)
+  state            String?            @db.VarChar(100)
+  country          String?            @db.VarChar(100)
+  postalCode       String?            @db.VarChar(20)
+  nationality      String?            @db.VarChar(100)
+  dateOfBirth      DateTime?          @db.Date
+  idDocumentType   GuestDocumentType?
+  idDocumentNumber String?            @db.VarChar(60)
+  /// Internal notes; only roles with the notes permission may read them.
+  notes            String?
+  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
+
+  business          Business                @relation(fields: [businessId], references: [id])
+  documents         GuestDocument[]
+  reservations      Reservation[]
+  registrationCards GuestRegistrationCard[]
+
+  @@unique([id, businessId])
+  @@index([businessId, fullName])
+  @@index([businessId, phone])
+  @@map("guests")
+}
+
+/// Stores metadata for one uploaded guest identity file; the file itself lives in private storage, never in PostgreSQL.
+model GuestDocument {
+  id               String            @id @default(uuid(7)) @db.Uuid
+  businessId       String            @db.Uuid
+  guestId          String            @db.Uuid
+  /// Location where the file was uploaded (for location authorization and audit).
+  locationId       String            @db.Uuid
+  documentType     GuestDocumentType
+  /// Randomized private object key; never derived from the guest's name or the original file name.
+  storageKey       String            @unique @db.VarChar(255)
+  originalFileName String            @db.VarChar(255)
+  contentType      String            @db.VarChar(100)
+  sizeBytes        Int
+  sha256           String?           @db.Char(64)
+  uploadedByUserId String            @db.Uuid
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  /// Soft deletion keeps the record for audit purposes.
+  deletedAt        DateTime?         @db.Timestamptz(3)
+
+  guest      Guest        @relation(fields: [guestId, businessId], references: [id, businessId])
+  location   Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  uploadedBy BusinessUser @relation(fields: [uploadedByUserId, businessId], references: [id, businessId])
+
+  @@index([guestId])
+  @@map("guest_documents")
+}
+
+// ───────────────────────────── Reservations and stays ─────────────────────────────
+
+/// Stores one reservation (booking) for a primary guest at one location.
+model Reservation {
+  id                 String            @id @default(uuid(7)) @db.Uuid
+  businessId         String            @db.Uuid
+  locationId         String            @db.Uuid
+  /// Human-readable number, unique within the location.
+  reservationNumber  String            @db.VarChar(30)
+  guestId            String            @db.Uuid
+  status             ReservationStatus @default(CONFIRMED)
+  checkInDate        DateTime          @db.Date
+  checkOutDate       DateTime          @db.Date
+  /// Expected arrival and departure times at the hotel (local time, optional). Availability is decided by the dates
+  /// (nights) alone; these times are for front-desk planning (added in Phase 6.3).
+  checkInTime        DateTime?         @db.Time(0)
+  checkOutTime       DateTime?         @db.Time(0)
+  adults             Int               @default(1)
+  children           Int               @default(0)
+  source             String?           @db.VarChar(40)
+  notes              String?           @db.VarChar(1000)
+  cancelledAt        DateTime?         @db.Timestamptz(3)
+  cancellationReason String?           @db.VarChar(500)
+  cancelledByUserId  String?           @db.Uuid
+  createdByUserId    String            @db.Uuid
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
+
+  location    Location          @relation(fields: [locationId, businessId], references: [id, businessId])
+  guest       Guest             @relation(fields: [guestId, businessId], references: [id, businessId])
+  createdBy   BusinessUser      @relation("ReservationCreatedBy", fields: [createdByUserId, businessId], references: [id, businessId])
+  cancelledBy BusinessUser?     @relation("ReservationCancelledBy", fields: [cancelledByUserId], references: [id])
+  rooms       ReservationRoom[]
+  payments    Payment[]
+
+  @@unique([id, locationId])
+  @@unique([locationId, reservationNumber])
+  @@index([locationId, checkInDate])
+  @@index([locationId, checkOutDate])
+  @@index([locationId, status])
+  @@index([guestId])
+  @@map("reservations")
+}
+
+/// Stores one room booked within a reservation for a date range; the no-double-booking constraint lives on this table.
+model ReservationRoom {
+  id                 String                @id @default(uuid(7)) @db.Uuid
+  businessId         String                @db.Uuid
+  locationId         String                @db.Uuid
+  reservationId      String                @db.Uuid
+  roomId             String                @db.Uuid
+  /// First night (inclusive).
+  startDate          DateTime              @db.Date
+  /// Departure date (exclusive), so a new guest may arrive on the day the previous one leaves.
+  endDate            DateTime              @db.Date
+  status             ReservationRoomStatus @default(RESERVED)
+  extraBeds          Int                   @default(0)
+  /// Agreed nightly rate for this booking (may differ from the room's standard rate only with permission and an audit entry).
+  nightlyRate        Decimal               @db.Decimal(12, 2)
+  extraBedRate       Decimal               @default(0) @db.Decimal(12, 2)
+  rateOverridden     Boolean               @default(false)
+  rateOverrideReason String?               @db.VarChar(500)
+  createdAt          DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime              @updatedAt @db.Timestamptz(3)
+
+  /// Composite keys guarantee the reservation and room are in the same location (and therefore the same business).
+  location    Location    @relation(fields: [locationId, businessId], references: [id, businessId])
+  reservation Reservation @relation(fields: [reservationId, locationId], references: [id, locationId])
+  room        Room        @relation(fields: [roomId, locationId], references: [id, locationId])
+  stay        Stay?
+
+  @@unique([id, locationId])
+  @@index([roomId, startDate, endDate])
+  @@index([reservationId])
+  @@map("reservation_rooms")
+}
+
+/// Stores one guest stay in one room, from check-in to checkout.
+model Stay {
+  id                   String     @id @default(uuid(7)) @db.Uuid
+  businessId           String     @db.Uuid
+  locationId           String     @db.Uuid
+  reservationRoomId    String     @db.Uuid
+  status               StayStatus @default(IN_HOUSE)
+  checkedInAt          DateTime   @default(now()) @db.Timestamptz(3)
+  checkedInByUserId    String     @db.Uuid
+  expectedCheckOutDate DateTime   @db.Date
+  checkedOutAt         DateTime?  @db.Timestamptz(3)
+  checkedOutByUserId   String?    @db.Uuid
+  adults               Int        @default(1)
+  children             Int        @default(0)
+  extraBeds            Int        @default(0)
+  createdAt            DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime   @updatedAt @db.Timestamptz(3)
+
+  location          Location               @relation(fields: [locationId, businessId], references: [id, businessId])
+  reservationRoom   ReservationRoom        @relation(fields: [reservationRoomId, locationId], references: [id, locationId])
+  checkedInBy       BusinessUser           @relation("StayCheckedInBy", fields: [checkedInByUserId, businessId], references: [id, businessId])
+  checkedOutBy      BusinessUser?          @relation("StayCheckedOutBy", fields: [checkedOutByUserId], references: [id])
+  registrationCard  GuestRegistrationCard?
+  bill              Bill?
+  housekeepingTasks HousekeepingTask[]
+
+  @@unique([id, locationId])
+  @@unique([reservationRoomId, locationId])
+  @@index([locationId, status])
+  @@map("stays")
+}
+
+/// Stores the Guest Registration Card completed at check-in, with a snapshot of guest details and a unique GRC number.
+model GuestRegistrationCard {
+  id               String             @id @default(uuid(7)) @db.Uuid
+  businessId       String             @db.Uuid
+  locationId       String             @db.Uuid
+  stayId           String             @db.Uuid
+  guestId          String             @db.Uuid
+  /// Unique within the business (includes the location code).
+  grcNumber        String             @db.VarChar(30)
+  guestFullName    String             @db.VarChar(160)
+  nationality      String?            @db.VarChar(100)
+  idDocumentType   GuestDocumentType?
+  idDocumentNumber String?            @db.VarChar(60)
+  address          String?            @db.VarChar(500)
+  phone            String?            @db.VarChar(40)
+  email            String?            @db.VarChar(254)
+  arrivingFrom     String?            @db.VarChar(120)
+  goingTo          String?            @db.VarChar(120)
+  purposeOfVisit   String?            @db.VarChar(120)
+  adults           Int                @default(1)
+  children         Int                @default(0)
+  issuedAt         DateTime           @default(now()) @db.Timestamptz(3)
+  issuedByUserId   String             @db.Uuid
+
+  location Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  stay     Stay         @relation(fields: [stayId, locationId], references: [id, locationId])
+  guest    Guest        @relation(fields: [guestId, businessId], references: [id, businessId])
+  issuedBy BusinessUser @relation(fields: [issuedByUserId, businessId], references: [id, businessId])
+
+  @@unique([stayId, locationId])
+  @@unique([businessId, grcNumber])
+  @@map("guest_registration_cards")
+}
+
+/// Stores the next value of a per-location counter used for reservation, GRC, and bill numbers.
+model NumberSequence {
+  businessId String             @db.Uuid
+  locationId String             @db.Uuid
+  kind       NumberSequenceKind
+  nextValue  Int                @default(1)
+  updatedAt  DateTime           @updatedAt @db.Timestamptz(3)
+
+  location Location @relation(fields: [locationId, businessId], references: [id, businessId])
+
+  @@id([locationId, kind])
+  @@map("number_sequences")
+}
+
+// ───────────────────────────── Billing and payments ─────────────────────────────
+
+/// Stores the bill for one stay; totals are fixed when the bill is finalized at checkout.
+model Bill {
+  id                String     @id @default(uuid(7)) @db.Uuid
+  businessId        String     @db.Uuid
+  locationId        String     @db.Uuid
+  stayId            String     @db.Uuid
+  /// Assigned when the bill is finalized; unique within the business.
+  billNumber        String?    @db.VarChar(30)
+  status            BillStatus @default(OPEN)
+  currencyCode      String     @db.Char(3)
+  /// Tax rate copied from the location when the bill was created, so later rate changes do not alter it.
+  taxRatePercent    Decimal    @db.Decimal(5, 2)
+  subtotal          Decimal    @default(0) @db.Decimal(12, 2)
+  taxTotal          Decimal    @default(0) @db.Decimal(12, 2)
+  grandTotal        Decimal    @default(0) @db.Decimal(12, 2)
+  paidTotal         Decimal    @default(0) @db.Decimal(12, 2)
+  balanceDue        Decimal    @default(0) @db.Decimal(12, 2)
+  finalizedAt       DateTime?  @db.Timestamptz(3)
+  finalizedByUserId String?    @db.Uuid
+  createdAt         DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime   @updatedAt @db.Timestamptz(3)
+
+  location    Location      @relation(fields: [locationId, businessId], references: [id, businessId])
+  stay        Stay          @relation(fields: [stayId, locationId], references: [id, locationId])
+  finalizedBy BusinessUser? @relation(fields: [finalizedByUserId], references: [id])
+  charges     Charge[]
+  payments    Payment[]
+
+  @@unique([id, locationId])
+  @@unique([stayId, locationId])
+  @@unique([businessId, billNumber])
+  @@map("bills")
+}
+
+/// Stores one line on a bill (room night, extra bed, tax, or additional charge); corrections are new reversing lines.
+model Charge {
+  id               String     @id @default(uuid(7)) @db.Uuid
+  businessId       String     @db.Uuid
+  locationId       String     @db.Uuid
+  billId           String     @db.Uuid
+  type             ChargeType
+  description      String     @db.VarChar(200)
+  serviceDate      DateTime?  @db.Date
+  quantity         Decimal    @default(1) @db.Decimal(10, 2)
+  unitAmount       Decimal    @db.Decimal(12, 2)
+  amount           Decimal    @db.Decimal(12, 2)
+  isTaxable        Boolean    @default(true)
+  rateOverridden   Boolean    @default(false)
+  overrideReason   String?    @db.VarChar(500)
+  /// Set on a correcting line that cancels an earlier charge.
+  reversesChargeId String?    @unique @db.Uuid
+  createdByUserId  String     @db.Uuid
+  createdAt        DateTime   @default(now()) @db.Timestamptz(3)
+
+  location       Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  bill           Bill         @relation(fields: [billId, locationId], references: [id, locationId])
+  createdBy      BusinessUser @relation(fields: [createdByUserId, businessId], references: [id, businessId])
+  reversesCharge Charge?      @relation("ChargeReversal", fields: [reversesChargeId], references: [id])
+  reversedBy     Charge?      @relation("ChargeReversal")
+
+  @@index([billId])
+  @@map("charges")
+}
+
+/// Stores one recorded payment or advance (no gateway); rows are append-only and corrected only by reversal entries.
+model Payment {
+  id                String           @id @default(uuid(7)) @db.Uuid
+  businessId        String           @db.Uuid
+  locationId        String           @db.Uuid
+  reservationId     String           @db.Uuid
+  /// Set once the payment is applied to a bill (advances may be recorded before a bill exists).
+  billId            String?          @db.Uuid
+  entryType         PaymentEntryType @default(PAYMENT)
+  /// True for advance payments taken before check-in or checkout.
+  isAdvance         Boolean          @default(false)
+  method            PaymentMethod
+  /// Always positive; a REVERSAL entry subtracts this amount.
+  amount            Decimal          @db.Decimal(12, 2)
+  currencyCode      String           @db.Char(3)
+  reference         String?          @db.VarChar(100)
+  notes             String?          @db.VarChar(500)
+  receivedAt        DateTime         @default(now()) @db.Timestamptz(3)
+  recordedByUserId  String           @db.Uuid
+  /// Set on a REVERSAL entry: the payment it cancels (each payment can be reversed once).
+  reversesPaymentId String?          @unique @db.Uuid
+  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
+
+  location        Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  reservation     Reservation  @relation(fields: [reservationId, locationId], references: [id, locationId])
+  bill            Bill?        @relation(fields: [billId], references: [id])
+  recordedBy      BusinessUser @relation(fields: [recordedByUserId, businessId], references: [id, businessId])
+  reversesPayment Payment?     @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
+  reversedBy      Payment?     @relation("PaymentReversal")
+
+  @@index([reservationId])
+  @@index([billId])
+  @@map("payments")
+}
+
+// ───────────────────────────── Housekeeping ─────────────────────────────
+
+/// Stores one cleaner or cleaning staff member of a location (cleaners do not log in).
+model Cleaner {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  businessId String   @db.Uuid
+  locationId String   @db.Uuid
+  name       String   @db.VarChar(120)
+  phone      String?  @db.VarChar(40)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  location Location           @relation(fields: [locationId, businessId], references: [id, businessId])
+  tasks    HousekeepingTask[]
+
+  @@index([locationId, isActive])
+  @@map("cleaners")
+}
+
+/// Stores one housekeeping task for a room, created at checkout or requested manually.
+model HousekeepingTask {
+  id                String                 @id @default(uuid(7)) @db.Uuid
+  businessId        String                 @db.Uuid
+  locationId        String                 @db.Uuid
+  roomId            String                 @db.Uuid
+  stayId            String?                @db.Uuid
+  source            HousekeepingTaskSource
+  status            HousekeepingTaskStatus @default(PENDING)
+  notes             String?                @db.VarChar(500)
+  /// Cleaner assigned to the task; the server checks the cleaner belongs to the same location.
+  assignedCleanerId String?                @db.Uuid
+  assignedAt        DateTime?              @db.Timestamptz(3)
+  startedAt         DateTime?              @db.Timestamptz(3)
+  completedAt       DateTime?              @db.Timestamptz(3)
+  createdByUserId   String?                @db.Uuid
+  createdAt         DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime               @updatedAt @db.Timestamptz(3)
+
+  location        Location      @relation(fields: [locationId, businessId], references: [id, businessId])
+  room            Room          @relation(fields: [roomId, locationId], references: [id, locationId])
+  stay            Stay?         @relation(fields: [stayId], references: [id])
+  assignedCleaner Cleaner?      @relation(fields: [assignedCleanerId], references: [id])
+  createdBy       BusinessUser? @relation(fields: [createdByUserId], references: [id])
+
+  @@index([locationId, status])
+  @@index([roomId])
+  @@map("housekeeping_tasks")
+}
+
+// ───────────────────────────── Audit ─────────────────────────────
+
+/// Stores one audited action (who, when, what, which record, which business/location); rows can never be changed or deleted.
+model AuditLog {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  actorType      AuditActorType
+  superAdminId   String?        @db.Uuid
+  businessUserId String?        @db.Uuid
+  businessId     String?        @db.Uuid
+  locationId     String?        @db.Uuid
+  /// Short action name, for example "auth.login.success" or "reservation.cancel".
+  action         String         @db.VarChar(80)
+  entityType     String?        @db.VarChar(60)
+  entityId       String?        @db.VarChar(64)
+  /// Extra details; never contains passwords, tokens, or file contents.
+  metadata       Json?
+  ipAddress      String?        @db.VarChar(45)
+  userAgent      String?        @db.VarChar(512)
+
+  superAdmin   SuperAdmin?   @relation(fields: [superAdminId], references: [id])
+  businessUser BusinessUser? @relation(fields: [businessUserId], references: [id])
+  business     Business?     @relation(fields: [businessId], references: [id])
+  location     Location?     @relation(fields: [locationId], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

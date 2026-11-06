@@ -1,0 +1,32 @@
+// TypeScript settings for the Next.js web app (Next.js compiles the code; tsc only type-checks).
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // Browser and bundler targets used by Next.js.
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "noEmit": true,
+    "incremental": true,
+
+    // Next.js editor plugin for route and config type hints.
+    "plugins": [{ "name": "next" }],
+
+    // "@/..." imports resolve from the web app root (for example "@/lib/api-client").
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,11 @@
+// Lint rules for the API source and tests, checked by oxlint (this file allows JSONC comments).
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "typescript/no-explicit-any": "error"
+  },
+  "env": {
+    "node": true
+  },
+  "ignorePatterns": ["src/generated/**", "dist/**"]
+}

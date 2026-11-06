@@ -1,0 +1,40 @@
+# Files Git must never track: dependencies, build output, secrets, and local data.
+
+# Dependencies installed by pnpm.
+node_modules/
+.pnpm-store/
+
+# Build and framework output.
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Generated Prisma client (rebuilt by "prisma generate").
+apps/api/src/generated/
+
+# Environment files hold secrets; only the placeholder example is committed.
+.env
+.env.*
+!.env.example
+
+# Local development file storage for guest documents (never commit guest IDs).
+storage/
+apps/api/storage/
+
+# Test coverage, browser-test output, and logs.
+coverage/
+test-results/
+playwright-report/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor and operating-system clutter.
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

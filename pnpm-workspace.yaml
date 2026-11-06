@@ -1,0 +1,18 @@
+# Lists the folders that pnpm treats as workspace packages.
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 10 blocks install scripts by default; only these trusted packages may run them.
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - "prisma"
+  - "@tailwindcss/oxide"
+  - "esbuild"
+  - "unrs-resolver"
+
+# Packages whose install scripts are not needed and stay blocked (@scarf/scarf is install telemetry from Swagger UI).
+ignoredBuiltDependencies:
+  - "@nestjs/core"
+  - "@scarf/scarf"
+  - "sharp"
