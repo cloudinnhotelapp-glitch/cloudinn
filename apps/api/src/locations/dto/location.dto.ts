@@ -1,7 +1,7 @@
 // Request bodies and query parameters for Super Admin location management, validated before reaching the service.
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength, Validate, ValidatorConstraint, type ValidatorConstraintInterface } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsUrl, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, Validate, ValidatorConstraint, type ValidatorConstraintInterface } from 'class-validator';
 import { trim, trimOrNull } from '../../businesses/dto/business.dto.js';
 import { PaginationQueryDto } from '../../common/http/pagination.js';
 
@@ -26,6 +26,15 @@ export class IsTimeZoneConstraint implements ValidatorConstraintInterface {
     return 'timezone must be a valid IANA time zone, for example "Asia/Kolkata"';
   }
 }
+
+// Turns a coordinate into trimmed text, and an empty value into null.
+const coordinateInput = ({ value }: { value: unknown }) => {
+  if (value === '' || value === null) return null;
+  return typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() || null : value;
+};
+
+// Turns a whole number sent as text into a number, and an empty value into null.
+const wholeNumberInput = ({ value }: { value: unknown }) => (value === '' || value === null ? null : typeof value === 'string' ? Number(value) : value);
 
 // Turns text into upper case after trimming (used for codes).
 const upper = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim().toUpperCase() : value);
@@ -73,6 +82,94 @@ export class CreateLocationDto {
   @Transform(({ value }: { value: unknown }) => (typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : value))
   @Matches(/^(100(\.0{1,2})?|\d{1,2}(\.\d{1,2})?)$/, { message: 'taxRatePercent must be a number from 0 to 100 with up to 2 decimals' })
   taxRatePercent!: string;
+
+  @ApiPropertyOptional({ example: '14:00', description: 'Standard check-in time (HH:mm, hotel time); default 14:00' })
+  @Transform(trim)
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'standardCheckInTime must be a time (HH:mm)' })
+  standardCheckInTime?: string;
+
+  @ApiPropertyOptional({ example: '11:00', description: 'Standard check-out time (HH:mm, hotel time); default 11:00' })
+  @Transform(trim)
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'standardCheckOutTime must be a time (HH:mm)' })
+  standardCheckOutTime?: string;
+
+  @ApiPropertyOptional({ default: false, description: 'Require at least one uploaded ID document before check-in' })
+  @IsOptional()
+  @IsBoolean()
+  requireIdDocumentUpload?: boolean;
+
+  @ApiPropertyOptional({ maxLength: 500, example: 'https://example.com/feedback', description: 'Link to the guest feedback form (https), used in WhatsApp feedback messages; empty or null clears it' })
+  @Transform(trimOrNull)
+  @IsOptional()
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { message: 'guestFeedbackUrl must be an https link' })
+  @MaxLength(500)
+  guestFeedbackUrl?: string | null;
+
+  @ApiPropertyOptional({ example: '9.931233', description: 'Latitude of the attendance area (set together with longitude and radius); empty or null clears it' })
+  @Transform(coordinateInput)
+  @IsOptional()
+  @Matches(/^-?(90(\.0{1,6})?|[1-8]?\d(\.\d{1,6})?)$/, { message: 'attendanceLatitude must be a latitude from -90 to 90 with up to 6 decimals' })
+  attendanceLatitude?: string | null;
+
+  @ApiPropertyOptional({ example: '76.267304', description: 'Longitude of the attendance area' })
+  @Transform(coordinateInput)
+  @IsOptional()
+  @Matches(/^-?(180(\.0{1,6})?|(1[0-7]\d|[1-9]?\d)(\.\d{1,6})?)$/, { message: 'attendanceLongitude must be a longitude from -180 to 180 with up to 6 decimals' })
+  attendanceLongitude?: string | null;
+
+  @ApiPropertyOptional({ example: 100, description: 'Allowed distance from the centre, in metres (10 to 5000)' })
+  @Transform(({ value }: { value: unknown }) => (value === '' || value === null ? null : typeof value === 'string' ? Number(value) : value))
+  @IsOptional()
+  @IsInt({ message: 'attendanceRadiusMeters must be a whole number of metres' })
+  @Min(10, { message: 'attendanceRadiusMeters must be at least 10 metres' })
+  @Max(5000, { message: 'attendanceRadiusMeters must be at most 5000 metres' })
+  attendanceRadiusMeters?: number | null;
+
+  @ApiPropertyOptional({ default: true, description: 'Whether staff can punch in and out at this location' })
+  @IsOptional()
+  @IsBoolean()
+  attendanceEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: '09:00', description: 'Expected start of work (HH:mm, hotel time); empty turns late tracking off' })
+  @Transform(trimOrNull)
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'attendanceShiftStart must be a time (HH:mm)' })
+  attendanceShiftStart?: string | null;
+
+  @ApiPropertyOptional({ example: 10, description: 'Minutes after the shift start that still count as on time' })
+  @Transform(wholeNumberInput)
+  @IsOptional()
+  @IsInt({ message: 'attendanceLateGraceMinutes must be a whole number' })
+  @Min(0, { message: 'attendanceLateGraceMinutes must be from 0 to 240' })
+  @Max(240, { message: 'attendanceLateGraceMinutes must be from 0 to 240' })
+  attendanceLateGraceMinutes?: number;
+
+  @ApiPropertyOptional({ example: '08:00', description: 'Earliest allowed punch-in (HH:mm); set together with the latest' })
+  @Transform(trimOrNull)
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'attendanceCheckInFrom must be a time (HH:mm)' })
+  attendanceCheckInFrom?: string | null;
+
+  @ApiPropertyOptional({ example: '11:00', description: 'Latest allowed punch-in (HH:mm)' })
+  @Transform(trimOrNull)
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'attendanceCheckInUntil must be a time (HH:mm)' })
+  attendanceCheckInUntil?: string | null;
+
+  @ApiPropertyOptional({ enum: ['INSIDE_AREA', 'ANY_LOCATION'] })
+  @IsOptional()
+  @IsIn(['INSIDE_AREA', 'ANY_LOCATION'])
+  attendanceCheckOutPolicy?: 'INSIDE_AREA' | 'ANY_LOCATION';
+
+  @ApiPropertyOptional({ example: 365, description: 'Days to keep attendance photos; empty keeps them' })
+  @Transform(wholeNumberInput)
+  @IsOptional()
+  @IsInt({ message: 'attendancePhotoRetentionDays must be a whole number of days' })
+  @Min(1, { message: 'attendancePhotoRetentionDays must be at least 1' })
+  @Max(3650, { message: 'attendancePhotoRetentionDays must be at most 3650' })
+  attendancePhotoRetentionDays?: number | null;
 }
 
 // Fields for editing a location; status changes use the activate/deactivate actions.

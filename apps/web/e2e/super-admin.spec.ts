@@ -107,25 +107,28 @@ test.describe.serial('console workflow', () => {
 
   // Proves a business can be created (with validation), opened, and edited.
   test('creates and edits a business', async () => {
-    // The old /new address opens the Businesses page with the popup showing.
-    await page.goto('/super-admin/businesses/new');
-    await expect(page).toHaveURL(/\/super-admin\/businesses\?add=1$/);
-    await expect(page.getByRole('dialog', { name: 'New business' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog', { name: 'New business' })).toBeHidden();
+    // Old links with ?add=1 open the New business page (owner request 2026-11-16: a page instead of the popup).
+    await page.goto('/super-admin/businesses?add=1');
+    await expect(page).toHaveURL(/\/super-admin\/businesses\/new$/);
     await page.getByRole('navigation', { name: 'Console' }).getByRole('link', { name: 'Businesses', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Businesses', level: 1 })).toBeVisible();
-    // "New business" opens a popup on the same page (no separate page any more).
-    await page.getByRole('button', { name: 'New business', exact: true }).click();
-    const popup = page.getByRole('dialog', { name: 'New business' });
-    await expect(popup).toBeVisible();
-    await expect(page).toHaveURL(/\/super-admin\/businesses$/);
-    await popup.getByRole('button', { name: 'Create business' }).click();
-    await expect(popup.getByText('Enter a name of at least 2 characters.')).toBeVisible();
+    await page.getByRole('link', { name: 'New business', exact: true }).click();
+    await expect(page).toHaveURL(/\/super-admin\/businesses\/new$/);
+    await expect(page.getByRole('heading', { name: 'New business', level: 1 })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // The other steps open once the business exists.
+    await expect(page.getByRole('navigation', { name: 'Setup steps' }).getByRole('button', { name: /Locations/ })).toBeDisabled();
+    await page.getByRole('button', { name: 'Create business and continue' }).click();
+    await expect(page.getByText('Enter a name of at least 2 characters.')).toBeVisible();
 
     await page.getByLabel('Business name').fill(businessName);
     await page.getByLabel('Contact email').fill(`owner.${runId}@hotel.test`);
-    await page.getByRole('button', { name: 'Create business' }).click();
+    await page.getByRole('button', { name: 'Create business and continue' }).click();
+    await expect(page.getByRole('heading', { name: `Set up ${businessName}`, level: 1 })).toBeVisible();
+    await expect(page).toHaveURL(/\/super-admin\/businesses\/new\?id=[0-9a-f-]{36}&step=locations$/);
+    // Finishing opens the business page (locations and users are added there in the next tests).
+    await page.getByRole('navigation', { name: 'Setup steps' }).getByRole('button', { name: /Business users/ }).click();
+    await page.getByRole('button', { name: 'Finish setup' }).click();
     await expect(page.getByRole('heading', { name: businessName })).toBeVisible();
     await expect(page.getByText('Active', { exact: true }).first()).toBeVisible();
 
@@ -224,12 +227,13 @@ test.describe.serial('console workflow', () => {
     await expect(dialog.getByRole('button', { name: 'Suspend business' })).toBeDisabled();
     await dialog.getByLabel('Reason (recorded in the audit log)').fill('UI test suspension');
     await dialog.getByRole('button', { name: 'Suspend business' }).click();
-    await expect(page.getByRole('note')).toContainText('UI test suspension');
+    // (The business page also has the WhatsApp section's note, so the suspension note is picked by its text.)
+    await expect(page.getByRole('note').filter({ hasText: /^Suspended / })).toContainText('UI test suspension');
 
     await page.getByRole('button', { name: 'Reactivate' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Reactivate business' }).click();
     await expect(page.getByRole('button', { name: 'Suspend' })).toBeVisible();
-    await expect(page.getByRole('note')).toHaveCount(0);
+    await expect(page.getByRole('note').filter({ hasText: /^Suspended / })).toHaveCount(0);
   });
 
   // Proves the audit log shows the console actions, filtered by action.

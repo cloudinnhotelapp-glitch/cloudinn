@@ -41,7 +41,7 @@ describe('Super Admin authentication (e2e)', () => {
   it('logs in, sets HttpOnly SameSite=Strict cookies, and stores only the token hash', async () => {
     const admin = await createSuperAdmin(prisma);
     const response = await login(admin.email.toUpperCase(), admin.password).expect(200);
-    expect(response.body).toEqual({ id: admin.id, email: admin.email, name: 'Test Super Admin', mustChangePassword: true });
+    expect(response.body).toEqual({ id: admin.id, email: admin.email, name: 'Test Super Admin', mustChangePassword: true, theme: null });
     expect(JSON.stringify(response.body)).not.toMatch(/hash|token/i);
 
     const cookies = parseSetCookies(response);
@@ -99,6 +99,29 @@ describe('Super Admin authentication (e2e)', () => {
   });
 
   // Proves password change needs CSRF, enforces the policy, revokes old sessions, and unlocks the console.
+  // Proves the Light/Dark theme is saved per Super Admin with the CSRF header, follows them into a new session, is validated,
+  // and waits for the temporary password to be changed.
+  it('saves the colour theme for the signed-in Super Admin only', async () => {
+    const pending = await loginOk(await createSuperAdmin(prisma));
+    await request(app.getHttpServer()).put('/api/v1/super-admin/auth/theme').set(sessionHeaders(pending, true)).send({ theme: 'DARK' }).expect(403);
+
+    const admin = await createSuperAdmin(prisma, false);
+    const other = await createSuperAdmin(prisma, false);
+    const session = await loginOk(admin);
+    const put = (body: object, csrf = true) => request(app.getHttpServer()).put('/api/v1/super-admin/auth/theme').set(sessionHeaders(session, csrf)).send(body);
+    expect((await request(app.getHttpServer()).get('/api/v1/super-admin/auth/me').set(sessionHeaders(session)).expect(200)).body.theme).toBeNull();
+    await put({ theme: 'DARK' }, false).expect(403);
+    await put({ theme: 'PURPLE' }).expect(400);
+    await put({ theme: 'DARK', superAdminId: other.id }).expect(400);
+    await put({ theme: 'DARK' }).expect(204);
+    expect((await request(app.getHttpServer()).get('/api/v1/super-admin/auth/me').set(sessionHeaders(session)).expect(200)).body.theme).toBe('DARK');
+    expect((await login(admin.email, admin.password).expect(200)).body.theme).toBe('DARK');
+    expect((await login(other.email, other.password).expect(200)).body.theme).toBeNull();
+    await request(app.getHttpServer()).put('/api/v1/super-admin/auth/theme').send({ theme: 'LIGHT' }).expect(401);
+    await put({ theme: 'LIGHT' }).expect(204);
+    expect((await prisma.superAdmin.findUniqueOrThrow({ where: { id: admin.id } })).themePreference).toBe('LIGHT');
+  });
+
   it('changes the password, revokes every old session, and issues a new one', async () => {
     const admin = await createSuperAdmin(prisma, true);
     const first = await loginOk(admin);

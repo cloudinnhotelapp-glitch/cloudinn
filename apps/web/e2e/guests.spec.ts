@@ -6,6 +6,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { fixture, type FixtureUser } from './fixture';
 import { rowAction } from './helpers';
 
+// A real 1x1 PNG (the server checks the file's real content).
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+
 // Short unique text for records created in this run.
 const runId = randomBytes(3).toString('hex').toUpperCase();
 
@@ -39,19 +42,35 @@ test.describe.serial('Guest management', () => {
     await page.close();
   });
 
-  // Proves the sidebar opens the Guests page, and the Add popup validates and creates a guest with every field.
-  test('adds a guest from the Guests page', async ({}, testInfo) => {
+  // Proves the Guests page has no Add button, and the walk-in "New guest" popup validates (name and at least one ID
+  // file required) and creates a guest with every field and two ID files.
+  test('adds a guest from the walk-in New guest popup', async ({}, testInfo) => {
     const nav = page.getByRole('navigation', { name: 'Main' });
     await nav.getByRole('link', { name: 'Guests', exact: true }).click();
     await expect(page).toHaveURL(/\/guests$/);
     await expect(page.getByRole('heading', { name: 'Guests', level: 1 })).toBeVisible();
     await expect(nav.getByRole('link', { name: 'Guests', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('button', { name: 'Add guest' })).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Add guest' }).click();
+    await page.goto('/check-in/walk-in');
+    await page.getByRole('button', { name: 'New guest' }).click();
     const popup = page.getByRole('dialog', { name: 'Add guest' });
     await expect(popup).toBeVisible();
     await popup.getByRole('button', { name: 'Add guest' }).click();
     await expect(popup.getByText('Enter the guest’s full name (at least 2 characters).')).toBeVisible();
+    await expect(popup.getByText('Upload at least one ID file (JPG, PNG, or PDF).')).toBeVisible();
+
+    // Two files chosen in two steps are both listed; one can be removed before saving.
+    const files = popup.getByLabel(/^ID files/);
+    await files.setInputFiles([
+      { name: 'passport-front.png', mimeType: 'image/png', buffer: PNG },
+      { name: 'passport-back.png', mimeType: 'image/png', buffer: Buffer.concat([PNG, Buffer.from([0])]) },
+    ]);
+    await files.setInputFiles({ name: 'mistake.png', mimeType: 'image/png', buffer: Buffer.concat([PNG, Buffer.from([0, 0])]) });
+    const chosen = popup.getByRole('list', { name: 'Chosen ID files' });
+    await expect(chosen.getByRole('listitem')).toHaveCount(3);
+    await popup.getByRole('button', { name: 'Remove mistake.png' }).click();
+    await expect(chosen.getByRole('listitem')).toHaveCount(2);
 
     await popup.getByLabel('Full name').fill(guestName);
     await popup.getByLabel('Email address').fill(email);
@@ -66,9 +85,16 @@ test.describe.serial('Guest management', () => {
     await popup.getByLabel('Notes').fill('Prefers a quiet room.');
     await page.screenshot({ path: testInfo.outputPath('guest-add-popup.png') });
     await popup.getByRole('button', { name: 'Add guest' }).click();
+    await expect(popup).toBeHidden();
+    await expect(page.getByRole('region', { name: 'Guest and ID' })).toContainText(guestName);
 
+    await page.goto('/guests');
+    await page.getByLabel('Search guests').fill(runId);
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByRole('link', { name: guestName }).click();
     await expect(page).toHaveURL(/\/guests\/[0-9a-f-]{36}$/);
     await expect(page.getByRole('heading', { name: guestName, level: 1 })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Identification' })).toContainText('Uploaded ID files2');
     const identification = page.getByRole('region', { name: 'Identification' });
     await expect(identification).toContainText('Passport');
     await expect(identification).toContainText(idNumber);
@@ -94,10 +120,12 @@ test.describe.serial('Guest management', () => {
     await page.locator('#guest-id-type-filter').selectOption('PASSPORT');
     await expect(row).toBeVisible();
 
-    await page.getByRole('button', { name: 'Add guest' }).click();
+    await page.goto('/check-in/walk-in');
+    await page.getByRole('button', { name: 'New guest' }).click();
     const popup = page.getByRole('dialog', { name: 'Add guest' });
     await popup.getByLabel('Full name').fill(`Someone Else ${runId}`);
     await popup.getByLabel('Email address').fill(email.toUpperCase());
+    await popup.getByLabel('ID files').setInputFiles({ name: 'id.png', mimeType: 'image/png', buffer: PNG });
     await popup.getByRole('button', { name: 'Add guest' }).click();
     await expect(popup.getByText(`A guest with this email address already exists: ${guestName}.`)).toBeVisible();
     await popup.getByRole('button', { name: 'Cancel' }).click();
@@ -106,6 +134,9 @@ test.describe.serial('Guest management', () => {
 
   // Proves the row menu opens the Edit popup, which saves only the changed details.
   test('edits a guest from the row menu', async () => {
+    await page.goto('/guests');
+    await page.getByLabel('Search guests').fill(runId);
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
     await rowAction(page, `Actions for guest ${guestName}`, 'Edit guest');
     const popup = page.getByRole('dialog', { name: 'Edit guest' });
     await expect(popup.getByLabel('Full name')).toHaveValue(guestName);

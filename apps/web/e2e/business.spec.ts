@@ -4,6 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { fixture, type FixtureUser } from './fixture';
+import { openPropertyTab } from './property-tabs';
 
 // Short unique text for names created in this run.
 const runId = randomBytes(3).toString('hex').toUpperCase();
@@ -25,6 +26,7 @@ test.describe('business access control', () => {
   test('redirects anonymous visitors to the login page', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/login$/);
+    // Room Status is its own page again (owner decision 2026-11-12).
     await page.goto('/room-status');
     await expect(page).toHaveURL(/\/login\?next=%2Froom-status$/);
   });
@@ -63,23 +65,27 @@ test.describe('Receptionist', () => {
     await expect(page.getByTestId('signed-in-as')).toContainText('Receptionist');
 
     const nav = page.getByRole('navigation', { name: 'Main' });
-    await expect(nav.getByRole('link', { name: 'Room status' })).toBeVisible();
-    await expect(nav.getByRole('link', { name: 'Floors', exact: true })).toBeVisible();
-    await expect(nav.getByRole('link', { name: 'Rooms', exact: true })).toBeVisible();
+    // Room Status has its own menu item again (owner decision 2026-11-12), besides the board on the dashboard.
+    await expect(nav.getByRole('link', { name: 'Room Status', exact: true })).toBeVisible();
+    // Property Setup is opened from Settings at the bottom of the sidebar (owner decision 2026-11-16).
+    await expect(page.locator('#business-sidebar').getByRole('link', { name: 'Settings', exact: true })).toBeVisible();
     await expect(page.getByLabel('Location')).toHaveCount(0);
 
-    await nav.getByRole('link', { name: 'Room status' }).click();
+    // The room board is on the dashboard itself.
     await expect(page.getByTestId('room-tile-101')).toContainText('Available');
     await expect(page.getByTestId('room-tile-102')).toContainText('Needs cleaning');
     await page.getByLabel('Status', { exact: true }).selectOption('NEEDS_CLEANING');
     await expect(page.getByTestId('room-tile-102')).toBeVisible();
     await expect(page.getByTestId('room-tile-101')).toHaveCount(0);
 
-    await nav.getByRole('link', { name: 'Floors', exact: true }).click();
-    await expect(page.getByText('Read-only. Floors, room types, and rooms are set up by your platform administrator.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Add floor', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /^(Edit|Deactivate|Activate) floor|^Actions for floor/ })).toHaveCount(0);
-    expect((await page.request.post('/api/v1/floors', { data: { name: 'Hack' }, headers: { Origin: 'http://localhost:3000' } })).status()).toBe(403);
+    // Receptionists edit Property Setup too (owner decision 2026-11-12), with a pencil on each row; they cannot delete.
+    await openPropertyTab(page, 'Floors');
+    await expect(page.getByText('Read-only. Floors, room types, and rooms are set up by your platform administrator.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add floor', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Edit floor / }).first()).toBeVisible();
+    const csrf = (await page.context().cookies()).find((cookie) => cookie.name === 'hms_csrf')?.value ?? '';
+    const floors = (await (await page.request.get('/api/v1/floors')).json()) as { id: string }[];
+    expect((await page.request.delete(`/api/v1/floors/${floors[0]!.id}`, { headers: { Origin: 'http://localhost:3000', 'x-csrf-token': csrf } })).status()).toBe(403);
   });
 });
 
@@ -97,7 +103,7 @@ test.describe('Manager', () => {
     await page.getByRole('button', { name: first!.name }).click();
     await expect(page).toHaveURL(/\/dashboard$/);
     await expect(page.getByText(`${first!.name} ·`)).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Floors', exact: true })).toBeVisible();
+    await expect(page.locator('#business-sidebar').getByRole('link', { name: 'Settings', exact: true })).toBeVisible();
 
     await page.getByLabel('Location').selectOption({ label: second!.name });
     await expect(page.getByText(`${second!.name} ·`)).toBeVisible();
@@ -105,16 +111,17 @@ test.describe('Manager', () => {
   });
 });
 
-// Admin: property pages are read-only (only the Super Admin sets up floors, room types, and rooms).
-test.describe.serial('Admin read-only property pages', () => {
+// Admin: Property Setup is editable (owner decision 2026-11-12): add, edit with the pencil on each row, activate and
+// deactivate; deleting stays with the Super Admin. Uses its own fixture business, because it adds records.
+test.describe.serial('Admin edits property setup', () => {
   let page: Page;
 
-  // Logs the Admin in once and selects the first location.
+  // Logs the Admin of the property-editing business in once.
   test.beforeAll(async ({ browser }) => {
-    page = await browser.newPage();
-    const { hotel } = fixture();
-    await logIn(page, hotel.users.ADMIN);
-    await page.getByRole('button', { name: hotel.locations[0]!.name }).click();
+    page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const { propertyEdit } = fixture();
+    await logIn(page, propertyEdit.users.ADMIN);
+    if (page.url().endsWith('/select-location')) await page.getByRole('button', { name: propertyEdit.locations[0]!.name }).click();
     await expect(page).toHaveURL(/\/dashboard$/);
   });
 
@@ -123,50 +130,64 @@ test.describe.serial('Admin read-only property pages', () => {
     await page.close();
   });
 
-  // Proves the Admin can view, search, and filter floors and room types but sees no add, edit, or activate controls.
-  test('views, searches, and filters floors and room types without write controls', async () => {
-    const nav = page.getByRole('navigation', { name: 'Main' });
-    await nav.getByRole('link', { name: 'Floors', exact: true }).click();
-    await expect(page.getByText('Read-only. Floors, room types, and rooms are set up by your platform administrator.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Add floor', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('columnheader', { name: 'Actions' })).toHaveCount(0);
-    await expect(page.getByRole('row').nth(1)).toBeVisible();
-    await page.locator('#floors-search').fill(`no-such-floor-${runId}`);
-    await expect(page.getByText('No floors match these filters.')).toBeVisible();
-    await page.locator('#floors-search').fill('');
-    await page.locator('#floors-status').selectOption('INACTIVE');
-    await expect(page.getByRole('row').filter({ hasText: /\bActive\b/ })).toHaveCount(0);
-    await page.locator('#floors-status').selectOption('');
+  // Proves the Admin adds a floor, renames it with the row's pencil, and deactivates and activates it; no Delete is offered.
+  test('adds, edits, and deactivates floors', async ({}, testInfo) => {
+    await openPropertyTab(page, 'Floors');
+    await expect(page.getByText('Read-only. Floors, room types, and rooms are set up by your platform administrator.')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Add floor', exact: true }).click();
+    await page.getByRole('dialog').getByLabel('Floor name').fill(`First ${runId}`);
+    await page.getByRole('dialog').getByRole('button', { name: 'Add floor', exact: true }).click();
+    await expect(page.getByRole('cell', { name: `First ${runId}`, exact: true })).toBeVisible();
 
-    await nav.getByRole('link', { name: 'Room Types', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Add room type', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /^(Edit|Deactivate|Activate) room type|^Actions for room type/ })).toHaveCount(0);
-    await page.locator('#room-types-search').fill(`no-such-type-${runId}`);
-    await expect(page.getByText('No room types match these filters.')).toBeVisible();
-    await page.locator('#room-types-search').fill('');
+    // The pencil is on the row itself (no menu needed).
+    await page.getByRole('button', { name: `Edit floor First ${runId}` }).click();
+    await page.getByRole('dialog').getByLabel('Floor name').fill(`Upper ${runId}`);
+    await page.getByRole('dialog').getByRole('button', { name: 'Save floor', exact: true }).click();
+    await expect(page.getByRole('cell', { name: `Upper ${runId}`, exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('property-floors-editable.png'), fullPage: true });
+
+    // The menu keeps Deactivate/Activate, and has no Delete.
+    await page.getByRole('button', { name: `Actions for floor Upper ${runId}` }).click();
+    const menu = page.getByRole('menu', { name: `Actions for floor Upper ${runId}` });
+    await expect(menu.getByRole('menuitem', { name: 'Delete floor' })).toHaveCount(0);
+    await menu.getByRole('menuitem', { name: 'Deactivate floor' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Deactivate floor', exact: true }).click();
+    await expect(page.getByRole('row').filter({ hasText: `Upper ${runId}` })).toContainText('Inactive');
   });
 
-  // Proves the Admin can view and search rooms but cannot add or edit them.
-  test('views and searches rooms without write controls', async () => {
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Rooms', exact: true }).click();
-    await expect(page.getByRole('cell', { name: '101', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Add room', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /^Edit room|^Actions for room/ })).toHaveCount(0);
-    await page.locator('#rooms-search').fill('102');
-    await expect(page.getByRole('cell', { name: '102', exact: true })).toBeVisible();
-    await expect(page.getByRole('cell', { name: '101', exact: true })).toHaveCount(0);
-    await page.locator('#rooms-search').fill('');
+  // Proves the Admin adds a room type and a room and edits the room with its pencil; rooms have no menu (no Delete).
+  test('adds room types and rooms and edits a room', async () => {
+    await openPropertyTab(page, 'Room Types');
+    await page.getByRole('button', { name: 'Add room type', exact: true }).click();
+    const typeDialog = page.getByRole('dialog');
+    await typeDialog.getByRole('textbox', { name: 'Name', exact: true }).fill(`Suite ${runId}`);
+    await typeDialog.getByLabel('Nightly rate').fill('5200');
+    await typeDialog.getByRole('button', { name: 'Add room type', exact: true }).click();
+    await expect(page.getByRole('cell', { name: `Suite ${runId}`, exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Edit room type Suite ${runId}` })).toBeVisible();
+
+    await openPropertyTab(page, 'Rooms');
+    await page.getByRole('button', { name: 'Add room', exact: true }).click();
+    const roomDialog = page.getByRole('dialog');
+    await roomDialog.getByLabel('Room number').fill('301');
+    await roomDialog.getByLabel('Floor').selectOption({ index: 1 });
+    await roomDialog.getByLabel('Room type').selectOption({ label: `Suite ${runId}` });
+    await roomDialog.getByRole('button', { name: 'Add room', exact: true }).click();
+    await expect(page.getByRole('row', { name: /301/ })).toContainText('5200.00');
+
+    await expect(page.getByRole('button', { name: 'Actions for room 301' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Edit room 301' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
   });
 
-  // Proves the API refuses every property write from the Admin with 403 even with a valid CSRF token.
-  test('gets 403 from the API for property writes', async () => {
+  // Proves the API lets the Admin add but refuses deleting, even with a valid CSRF token.
+  test('may not delete through the API', async () => {
     const csrf = (await page.context().cookies()).find((cookie) => cookie.name === 'hms_csrf')?.value ?? '';
-    expect(csrf).not.toBe('');
     const headers = { Origin: 'http://localhost:3000', 'x-csrf-token': csrf };
-    expect((await page.request.post('/api/v1/floors', { data: { name: `Hack ${runId}` }, headers })).status()).toBe(403);
-    expect((await page.request.post('/api/v1/room-types', { data: { name: `Hack ${runId}`, baseCapacity: 2, standardRate: '100.00' }, headers })).status()).toBe(403);
-    expect((await page.request.post('/api/v1/rooms', { data: { roomNumber: `H${runId}` }, headers })).status()).toBe(403);
-    expect((await page.request.get('/api/v1/floors')).status()).toBe(200);
+    const created = await page.request.post('/api/v1/floors', { data: { name: `Api ${runId}` }, headers });
+    expect(created.status()).toBe(201);
+    expect((await page.request.delete(`/api/v1/floors/${(await created.json()).id}`, { headers })).status()).toBe(403);
   });
 
   // Proves logout ends the business session: pages redirect to /login and the API refuses the old cookie.
@@ -185,9 +206,11 @@ test('never forces a business user to change the password', async ({ page }) => 
   const user = fixture().pendingUser;
   await logIn(page, user);
   await expect(page).toHaveURL(/\/dashboard$/);
-  const nav = page.getByRole('navigation', { name: 'Main' });
-  await nav.getByRole('link', { name: 'Room status' }).click();
-  await expect(page).toHaveURL(/\/room-status$/);
-  await expect(page.getByTestId('page-title')).toHaveText('Room Status');
+  await openPropertyTab(page, 'Floors');
+  // The old addresses open their tab of Property Setup.
+  for (const [old, tab] of [['/floors', 'floors'], ['/room-types', 'room-types'], ['/rooms', 'rooms']] as const) {
+    await page.goto(old);
+    await expect(page).toHaveURL(new RegExp(`/property/${tab}$`));
+  }
   await expect(page.getByText('temporary password')).toHaveCount(0);
 });

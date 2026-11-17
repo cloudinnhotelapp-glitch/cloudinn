@@ -1,4 +1,5 @@
-// Business-user Change Password form: optional, available at any time from the account menu and the sidebar (never forced).
+// Business-user Change Password form: optional, available at any time from the account menu and the Settings page (never
+// forced). On the Settings page it is embedded: no page heading, its own field ids, and the user stays on the page.
 'use client';
 
 import { useState, type FormEvent } from 'react';
@@ -14,7 +15,7 @@ import { BUSINESS_PATHS, useBusinessSession } from './business-session';
 const MIN_LENGTH = 12;
 
 // Renders the form; on success the server signs out other sessions and issues a fresh session cookie.
-export function BusinessChangePasswordForm() {
+export function BusinessChangePasswordForm({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const notify = useNotify();
   const { setInfo } = useBusinessSession();
@@ -23,6 +24,8 @@ export function BusinessChangePasswordForm() {
   const [confirm, setConfirm] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  // Next.js keeps visited pages mounted, so the embedded copy uses its own ids.
+  const id = (name: string) => (embedded ? `settings-${name}` : name);
 
   // Checks the obvious rules locally, then submits; the server applies the full policy.
   async function submit(event: FormEvent) {
@@ -44,6 +47,10 @@ export function BusinessChangePasswordForm() {
       setConfirm('');
       notify('Password changed. Other devices were signed out.');
       setInfo(updated);
+      if (embedded) {
+        setBusy(false);
+        return;
+      }
       router.replace(updated.activeLocationId || updated.locations.length === 0 ? BUSINESS_PATHS.dashboard : BUSINESS_PATHS.selectLocation);
     } catch (error) {
       const messages = errorMessages(error);
@@ -54,18 +61,22 @@ export function BusinessChangePasswordForm() {
   }
 
   return (
-    <section className="mx-auto flex max-w-md flex-col gap-4">
-      <h1 className="ui-page-title">Change password</h1>
-      <p className="text-sm text-slate-500">Optional: choose a new password whenever you like. You stay signed in here; other devices are signed out.</p>
+    <section className={embedded ? 'flex max-w-md flex-col gap-4' : 'mx-auto flex max-w-md flex-col gap-4'}>
+      {!embedded && (
+        <>
+          <h1 className="ui-page-title">Change password</h1>
+          <p className="text-sm text-slate-500">Optional: choose a new password whenever you like. You stay signed in here; other devices are signed out.</p>
+        </>
+      )}
       <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-4" noValidate>
-        <Field id="current-password" label="Current Password" required>
-          <input id="current-password" type="password" autoComplete="current-password" className={inputClass} value={current} onChange={(e) => setCurrent(e.target.value)} />
+        <Field id={id('current-password')} label="Current Password" required>
+          <input id={id('current-password')} type="password" autoComplete="current-password" className={inputClass} value={current} onChange={(e) => setCurrent(e.target.value)} />
         </Field>
-        <Field id="new-password" label="New Password" hint="At least 12 characters; not a common password; must not contain your name or email." required>
-          <input id="new-password" type="password" autoComplete="new-password" className={inputClass} value={next} onChange={(e) => setNext(e.target.value)} />
+        <Field id={id('new-password')} label="New Password" hint="At least 12 characters; not a common password; must not contain your name or email." required>
+          <input id={id('new-password')} type="password" autoComplete="new-password" className={inputClass} value={next} onChange={(e) => setNext(e.target.value)} />
         </Field>
-        <Field id="confirm-password" label="Confirm New Password" required>
-          <input id="confirm-password" type="password" autoComplete="new-password" className={inputClass} value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        <Field id={id('confirm-password')} label="Confirm New Password" required>
+          <input id={id('confirm-password')} type="password" autoComplete="new-password" className={inputClass} value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         </Field>
         <FormErrors messages={errors} />
         <Button type="submit" busy={busy}>

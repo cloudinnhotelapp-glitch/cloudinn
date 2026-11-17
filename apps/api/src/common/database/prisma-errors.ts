@@ -27,3 +27,14 @@ export function isUniqueViolation(error: unknown): boolean {
 export function isReservationOverlapError(error: unknown): boolean {
   return postgresErrorCode(error) === PG_EXCLUSION_VIOLATION;
 }
+
+// PostgreSQL codes for transactions that lost a race with another one (deadlock detected, serialization failure).
+export const PG_DEADLOCK_DETECTED = '40P01';
+export const PG_SERIALIZATION_FAILURE = '40001';
+
+// True when a transaction failed only because another transaction changed the same rows at the same moment; the
+// caller answers 409 and the user can simply try again.
+export function isConcurrencyConflict(error: unknown): boolean {
+  const code = postgresErrorCode(error) ?? (error as { code?: string } | null)?.code;
+  return code === PG_DEADLOCK_DETECTED || code === PG_SERIALIZATION_FAILURE || code === 'P2034';
+}

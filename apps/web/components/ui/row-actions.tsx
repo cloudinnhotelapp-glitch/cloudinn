@@ -10,6 +10,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { zoomFactor } from '@/lib/zoom';
 import { Icon, type IconName } from './icons';
 
 // Colour of a menu item (reference: blue, emerald, red, amber, purple, or slate text).
@@ -35,6 +36,21 @@ const TONES: Record<RowActionTone, string> = {
   slate: 'text-slate-700',
 };
 
+// A directly visible edit (pencil) button for a table row, the same size and look as the "more" button beside it.
+export function RowEditButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-100 bg-white text-emerald-600 shadow-sm transition-colors hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 dark:border-slate-700 dark:bg-slate-900 dark:text-emerald-400 dark:hover:bg-slate-800"
+    >
+      <Icon name="edit" className="h-4 w-4" />
+    </button>
+  );
+}
+
 // Height the reference uses to decide whether the menu fits below the button: 36px per item plus 16px padding.
 const ITEM_HEIGHT = 36;
 const MENU_PADDING = 16;
@@ -57,12 +73,14 @@ export function RowActions({ label, actions }: { label: string; actions: RowActi
   // Opens the menu below the button, or above it when the space below is too small.
   function toggle() {
     if (open) return close();
+    // Screen coordinates are not zoomed but CSS lengths are, so positions are worked out at the header's zoom level.
+    const zoom = zoomFactor();
     const rect = triggerRef.current!.getBoundingClientRect();
-    const height = actions.length * ITEM_HEIGHT + MENU_PADDING;
+    const height = (actions.length * ITEM_HEIGHT + MENU_PADDING) * zoom;
     const below = window.innerHeight - rect.bottom;
-    const next: CSSProperties = { right: window.innerWidth - rect.right };
-    if (below < height && rect.top > height) next.bottom = window.innerHeight - rect.top + 4;
-    else next.top = rect.bottom + 4;
+    const next: CSSProperties = { right: (window.innerWidth - rect.right) / zoom };
+    if (below < height && rect.top > height) next.bottom = (window.innerHeight - rect.top) / zoom + 4;
+    else next.top = rect.bottom / zoom + 4;
     setPosition(next);
   }
 

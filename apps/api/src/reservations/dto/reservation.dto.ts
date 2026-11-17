@@ -1,6 +1,6 @@
 // Request bodies and filters for reservations, validated before reaching the service. Rates, taxes, capacity, and
 // availability are never taken from the client: only room IDs, extra beds, and (with permission) an agreed rate.
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -22,6 +22,7 @@ import { BOOKING_SOURCES, PAYMENT_METHODS, RESERVATION_LIMITS, RESERVATION_STATU
 import { trimOrNull } from '../../businesses/dto/business.dto.js';
 import { PaginationQueryDto } from '../../common/http/pagination.js';
 import { MONEY_MESSAGE, MONEY_PATTERN, moneyInput } from '../../common/http/validation.js';
+import { RoomAvailabilityQueryDto } from '../../availability/dto/availability.dto.js';
 import { CreateGuestDto } from '../../guests/dto/guest.dto.js';
 
 // "YYYY-MM-DD" dates and "HH:mm" times.
@@ -193,6 +194,9 @@ export class NoShowDto {
 // An advance payment recorded after booking.
 export class RecordPaymentDto extends AdvancePaymentDto {}
 
+// Which reservations the list shows: booked ones (Reservations page) or walk-in check-ins (Walk-in Check-ins page).
+export const RESERVATION_KINDS = ['BOOKED', 'WALK_IN'] as const;
+
 // Sort orders for the list.
 export const RESERVATION_SORTS = ['newest', 'checkInAsc', 'checkInDesc', 'number'] as const;
 
@@ -233,27 +237,52 @@ export class ListReservationsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(RESERVATION_SORTS)
   sort?: (typeof RESERVATION_SORTS)[number];
+
+  @ApiPropertyOptional({ enum: RESERVATION_KINDS, description: 'BOOKED: everything except walk-ins; WALK_IN: walk-in check-ins only; empty: all' })
+  @Transform(trimOrNull)
+  @IsOptional()
+  @IsIn(RESERVATION_KINDS)
+  kind?: (typeof RESERVATION_KINDS)[number];
 }
 
-// Availability check for a date range.
-export class AvailabilityQueryDto {
-  @ApiProperty({ example: '2026-12-01' })
-  @Matches(DATE, { message: 'checkInDate must be a date (YYYY-MM-DD)' })
-  checkInDate!: string;
+// Availability check for the reservation form: the central availability filters, always for the active location.
+export class AvailabilityQueryDto extends OmitType(RoomAvailabilityQueryDto, ['locationId'] as const) {}
 
-  @ApiProperty({ example: '2026-12-03' })
-  @Matches(DATE, { message: 'checkOutDate must be a date (YYYY-MM-DD)' })
-  checkOutDate!: string;
+// Moving one booked room to another room (same dates). Rates come from the new room unless an agreed rate is allowed.
+export class ReassignRoomDto {
+  @ApiProperty({ format: 'uuid', description: 'The room to move to' })
+  @IsUUID()
+  roomId!: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({ minimum: 0, maximum: 10, description: 'Extra beds in the new room (default: keep the current number)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10)
+  extraBeds?: number;
+
+  @ApiPropertyOptional({ example: '3200.00', description: 'Agreed nightly rate when it differs from the new room’s standard rate (needs billing.rateOverride and a reason)' })
+  @Transform(moneyInput)
+  @IsOptional()
+  @Matches(MONEY_PATTERN, { message: `nightlyRate ${MONEY_MESSAGE}` })
+  nightlyRate?: string;
+
+  @ApiPropertyOptional({ maxLength: 500 })
   @Transform(trimOrNull)
   @IsOptional()
-  @IsUUID()
-  roomTypeId?: string;
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  rateOverrideReason?: string | null;
+}
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'When editing: ignore this reservation’s own rooms' })
-  @Transform(trimOrNull)
-  @IsOptional()
-  @IsUUID()
-  excludeReservationId?: string;
+// Releasing an unused room of a partly checked-in reservation, with a required reason.
+export class ReleaseRoomDto {
+  @ApiProperty({ minLength: 5, maxLength: 500 })
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(5, { message: 'Enter a reason of at least 5 characters.' })
+  @MaxLength(500)
+  reason!: string;
 }

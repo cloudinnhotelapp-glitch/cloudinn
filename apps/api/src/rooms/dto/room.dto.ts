@@ -114,4 +114,11 @@ export class RoomBoardQueryDto {
   @IsOptional()
   @IsIn(ROOM_BOARD_STATUSES)
   status?: RoomBoardStatus;
+
+  @ApiPropertyOptional({ maxLength: 100, description: 'Room number, guest name, GRC number, or reservation number (Room Dashboard)' })
+  @Transform(trimOrNull)
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
 }

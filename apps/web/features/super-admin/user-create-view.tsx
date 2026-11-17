@@ -1,4 +1,6 @@
-// Page body for creating a business user (Admin, Manager, or Receptionist) with the initial password set by the Super Admin.
+// Creating a business user (Admin, Manager, or Receptionist) with the initial password set by the Super Admin: the form
+// (also used by the New business setup page, owner request 2026-11-16) and the page body of
+// /super-admin/businesses/[businessId]/users/new.
 'use client';
 
 import Link from 'next/link';
@@ -17,12 +19,15 @@ import { LocationChecklist } from './location-checklist';
 // Minimum length, matching the server's password policy (the server also rejects common and personal passwords).
 const PASSWORD_MIN_LENGTH = 12;
 
-// Renders the new-user form for the business in the URL.
-export function UserCreateView() {
-  const { businessId } = useParams<{ businessId: string }>();
-  const router = useRouter();
-  const notify = useNotify();
-  const { data: business, error, loading, reload } = useApiQuery<BusinessDetail>(`/super-admin/businesses/${businessId}`);
+// Props of the form: the business, what happens after creating, and an optional Cancel.
+export interface BusinessUserFormProps {
+  businessId: string;
+  onCreated: (user: BusinessUserDetail) => void;
+  onCancel?: () => void;
+}
+
+// The new-user form: validates locally, then creates the user through the API.
+export function BusinessUserForm({ businessId, onCreated, onCancel }: BusinessUserFormProps) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,13 +55,69 @@ export function UserCreateView() {
       const user = await apiRequest<BusinessUserDetail>('POST', `/super-admin/businesses/${businessId}/users`, {
         body: { name: name.trim(), email: email.trim(), role, password, locationIds },
       });
-      notify(`User ${user.email} created. They can sign in with the initial password.`);
-      router.push(`/super-admin/users/${user.id}`);
+      setBusy(false);
+      onCreated(user);
     } catch (caught) {
       setErrors(errorMessages(caught));
       setBusy(false);
     }
   }
+
+  return (
+    <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-4" noValidate>
+      <Field id="user-name" label="Full name" error={fieldErrors.name} required>
+        <input id="user-name" className={inputClass} aria-invalid={!!fieldErrors.name} maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field id="user-email" label="Email (used to log in)" error={fieldErrors.email} required>
+        <input id="user-email" type="email" className={inputClass} aria-invalid={!!fieldErrors.email} maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
+      </Field>
+      <Field id="user-password" label="Initial password" hint="At least 12 characters; not a common password; must not contain the user's name or email." error={fieldErrors.password} required>
+        <input id="user-password" type="password" autoComplete="new-password" className={inputClass} aria-invalid={!!fieldErrors.password} maxLength={128} value={password} onChange={(e) => setPassword(e.target.value)} />
+      </Field>
+      <Field id="user-password-confirm" label="Confirm initial password" error={fieldErrors.confirmPassword} required>
+        <input
+          id="user-password-confirm"
+          type="password"
+          autoComplete="new-password"
+          className={inputClass}
+          aria-invalid={!!fieldErrors.confirmPassword}
+          maxLength={128}
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+        />
+      </Field>
+      <Field id="user-role" label="Role" hint="The role is fixed and cannot be changed later." error={fieldErrors.role} required>
+        <select id="user-role" className={inputClass} aria-invalid={!!fieldErrors.role} value={role} onChange={(e) => setRole(e.target.value as BusinessRole)}>
+          <option value="">Choose a role</option>
+          {BUSINESS_ROLES.map((value) => (
+            <option key={value} value={value}>
+              {titleCase(value)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <LocationChecklist businessId={businessId} selected={locationIds} onChange={setLocationIds} />
+      <FormErrors messages={errors} />
+      <div className="flex gap-2">
+        <Button type="submit" busy={busy}>
+          Create user
+        </Button>
+        {onCancel && (
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+// Renders the new-user page for the business in the URL; opens the new user afterwards.
+export function UserCreateView() {
+  const { businessId } = useParams<{ businessId: string }>();
+  const router = useRouter();
+  const notify = useNotify();
+  const { data: business, error, loading, reload } = useApiQuery<BusinessDetail>(`/super-admin/businesses/${businessId}`);
 
   if (error) return <ErrorState error={error} onRetry={reload} />;
   if (loading || !business) return <LoadingState />;
@@ -67,51 +128,14 @@ export function UserCreateView() {
         ← {business.name}
       </Link>
       <h1 className="ui-page-title">New user</h1>
-      {(
-        <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-4" noValidate>
-          <Field id="user-name" label="Full name" error={fieldErrors.name} required>
-            <input id="user-name" className={inputClass} aria-invalid={!!fieldErrors.name} maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field id="user-email" label="Email (used to log in)" error={fieldErrors.email} required>
-            <input id="user-email" type="email" className={inputClass} aria-invalid={!!fieldErrors.email} maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
-          </Field>
-          <Field id="user-password" label="Initial password" hint="At least 12 characters; not a common password; must not contain the user's name or email." error={fieldErrors.password} required>
-            <input id="user-password" type="password" autoComplete="new-password" className={inputClass} aria-invalid={!!fieldErrors.password} maxLength={128} value={password} onChange={(e) => setPassword(e.target.value)} />
-          </Field>
-          <Field id="user-password-confirm" label="Confirm initial password" error={fieldErrors.confirmPassword} required>
-            <input
-              id="user-password-confirm"
-              type="password"
-              autoComplete="new-password"
-              className={inputClass}
-              aria-invalid={!!fieldErrors.confirmPassword}
-              maxLength={128}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-            />
-          </Field>
-          <Field id="user-role" label="Role" hint="The role is fixed and cannot be changed later." error={fieldErrors.role} required>
-            <select id="user-role" className={inputClass} aria-invalid={!!fieldErrors.role} value={role} onChange={(e) => setRole(e.target.value as BusinessRole)}>
-              <option value="">Choose a role</option>
-              {BUSINESS_ROLES.map((value) => (
-                <option key={value} value={value}>
-                  {titleCase(value)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <LocationChecklist businessId={business.id} selected={locationIds} onChange={setLocationIds} />
-          <FormErrors messages={errors} />
-          <div className="flex gap-2">
-            <Button type="submit" busy={busy}>
-              Create user
-            </Button>
-            <Button variant="secondary" onClick={() => router.push(`/super-admin/businesses/${business.id}`)} disabled={busy}>
-              Cancel
-            </Button>
-          </div>
-        </form>
-      )}
+      <BusinessUserForm
+        businessId={business.id}
+        onCancel={() => router.push(`/super-admin/businesses/${business.id}`)}
+        onCreated={(user) => {
+          notify(`User ${user.email} created. They can sign in with the initial password.`);
+          router.push(`/super-admin/users/${user.id}`);
+        }}
+      />
     </section>
   );
 }

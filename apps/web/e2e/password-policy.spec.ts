@@ -5,6 +5,7 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { fixture } from './fixture';
+import { openPropertyTab } from './property-tabs';
 
 // Short unique text for accounts created in this run.
 const runId = randomBytes(3).toString('hex');
@@ -62,11 +63,8 @@ test.describe.serial('Business user password policy', () => {
       await signIn(page, account.slug, account.email, account.initial);
       await expect(page).toHaveURL(/\/dashboard$/);
       await expect(page.getByTestId('signed-in-as')).toContainText(account.label);
-      const nav = page.getByRole('navigation', { name: 'Main' });
-      await nav.getByRole('link', { name: 'Room Status', exact: true }).click();
-      await expect(page.getByTestId('page-title')).toHaveText('Room Status');
-      await nav.getByRole('link', { name: 'Rooms', exact: true }).click();
-      await expect(page.getByTestId('page-title')).toHaveText('Rooms');
+      await openPropertyTab(page, 'Floors');
+      await openPropertyTab(page, 'Rooms');
 
       // Change Password is optional and reached from the account menu.
       await page.getByRole('button', { name: new RegExp(account.label) }).first().click();

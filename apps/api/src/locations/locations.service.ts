@@ -65,6 +65,8 @@ export class LocationsService {
   // Creates an active location under the given business.
   async create(businessId: string, dto: CreateLocationDto, actor: SuperAdminActor): Promise<LocationDetail> {
     await this.assertBusinessExists(businessId);
+    assertCompleteAttendanceArea(dto.attendanceLatitude ?? null, dto.attendanceLongitude ?? null, dto.attendanceRadiusMeters ?? null);
+    assertAttendanceWindow(dto.attendanceCheckInFrom ?? null, dto.attendanceCheckInUntil ?? null);
     try {
       const location = await this.prisma.$transaction(async (tx) => {
         const created = await tx.location.create({ data: { ...dto, businessId }, include: WITH_COUNTS });
@@ -91,12 +93,23 @@ export class LocationsService {
 
   // Edits a location's details; the audit entry lists which fields changed.
   async update(id: string, dto: UpdateLocationDto, actor: SuperAdminActor): Promise<LocationDetail> {
-    for (const key of ['name', 'code', 'timezone', 'currencyCode', 'taxRatePercent'] as const) {
+    for (const key of ['name', 'code', 'timezone', 'currencyCode', 'taxRatePercent', 'standardCheckInTime', 'standardCheckOutTime', 'requireIdDocumentUpload', 'attendanceEnabled', 'attendanceLateGraceMinutes', 'attendanceCheckOutPolicy'] as const) {
       if (dto[key] === null) throw new BadRequestException([`${key} must not be empty`]);
     }
     const existing = await this.findOrThrow(id);
+    assertCompleteAttendanceArea(
+      dto.attendanceLatitude === undefined ? (existing.attendanceLatitude?.toString() ?? null) : dto.attendanceLatitude,
+      dto.attendanceLongitude === undefined ? (existing.attendanceLongitude?.toString() ?? null) : dto.attendanceLongitude,
+      dto.attendanceRadiusMeters === undefined ? existing.attendanceRadiusMeters : dto.attendanceRadiusMeters,
+    );
+    assertAttendanceWindow(dto.attendanceCheckInFrom === undefined ? existing.attendanceCheckInFrom : dto.attendanceCheckInFrom, dto.attendanceCheckInUntil === undefined ? existing.attendanceCheckInUntil : dto.attendanceCheckInUntil);
     const changed = (Object.keys(dto) as (keyof UpdateLocationDto)[]).filter((key) => {
       if (dto[key] === undefined) return false;
+      if (key === 'attendanceLatitude' || key === 'attendanceLongitude') {
+        const before = existing[key];
+        const after = dto[key];
+        return before === null || after === null ? before !== after : !before.equals(after!);
+      }
       return key === 'taxRatePercent' ? !existing.taxRatePercent.equals(dto.taxRatePercent!) : dto[key] !== existing[key];
     });
     if (changed.length === 0) return toDetail(existing);
@@ -163,7 +176,8 @@ export class LocationsService {
       const check = await this.inspect(tx, id);
       assertNotBlocked(check);
       await tx.location.update({ where: { id }, data: { archivedAt: new Date(), status: 'INACTIVE' } });
-      const cleared = await tx.businessUserSession.updateMany({ where: { activeLocationId: id }, data: { activeLocationId: null } });
+      // Sessions on it are moved on their next request, the same way as for a deactivated location.
+      const sessionsMoved = await tx.businessUserSession.count({ where: { activeLocationId: id } });
       await this.audit.record(
         {
           ...actor,
@@ -172,7 +186,7 @@ export class LocationsService {
           locationId: id,
           entityType: 'Location',
           entityId: id,
-          metadata: { name: existing.name, code: existing.code, sessionsMoved: cleared.count, keptRecords: Object.fromEntries(check.linked.map((item) => [item.label, item.count])) },
+          metadata: { name: existing.name, code: existing.code, sessionsMoved, keptRecords: Object.fromEntries(check.linked.map((item) => [item.label, item.count])) },
         },
         tx,
       );
@@ -234,6 +248,18 @@ export class LocationsService {
   }
 }
 
+// Refuses a punch-in window that is half set or runs backwards.
+function assertAttendanceWindow(from: string | null, until: string | null): void {
+  if ((from === null) !== (until === null)) throw new BadRequestException(['Enter both ends of the punch-in window, or leave both empty.']);
+  if (from !== null && until !== null && from >= until) throw new BadRequestException(['The punch-in window must start before it ends.']);
+}
+
+// Refuses an attendance area that is only partly filled in.
+function assertCompleteAttendanceArea(latitude: string | null, longitude: string | null, radiusMeters: number | null): void {
+  const filled = [latitude, longitude, radiusMeters].filter((value) => value !== null).length;
+  if (filled !== 0 && filled !== 3) throw new BadRequestException(['Enter the attendance latitude, longitude, and radius together, or leave all three empty.']);
+}
+
 // Converts a row into the API shape (the tax rate stays a decimal string, never a float).
 function toDetail(row: LocationWithCounts): LocationDetail {
   return {
@@ -247,6 +273,20 @@ function toDetail(row: LocationWithCounts): LocationDetail {
     timezone: row.timezone,
     currencyCode: row.currencyCode,
     taxRatePercent: row.taxRatePercent.toFixed(2),
+    standardCheckInTime: row.standardCheckInTime,
+    standardCheckOutTime: row.standardCheckOutTime,
+    requireIdDocumentUpload: row.requireIdDocumentUpload,
+    guestFeedbackUrl: row.guestFeedbackUrl,
+    attendanceLatitude: row.attendanceLatitude?.toFixed(6) ?? null,
+    attendanceLongitude: row.attendanceLongitude?.toFixed(6) ?? null,
+    attendanceRadiusMeters: row.attendanceRadiusMeters,
+    attendanceEnabled: row.attendanceEnabled,
+    attendanceShiftStart: row.attendanceShiftStart,
+    attendanceLateGraceMinutes: row.attendanceLateGraceMinutes,
+    attendanceCheckInFrom: row.attendanceCheckInFrom,
+    attendanceCheckInUntil: row.attendanceCheckInUntil,
+    attendanceCheckOutPolicy: row.attendanceCheckOutPolicy,
+    attendancePhotoRetentionDays: row.attendancePhotoRetentionDays,
     status: row.status,
     roomCount: row._count.rooms,
     assignedUserCount: row._count.userAssignments,

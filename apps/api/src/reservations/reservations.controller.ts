@@ -1,5 +1,5 @@
 // Reservation endpoints for business users (/api/v1/reservations), always for the active location from the session.
-// Permissions (docs/permissions.md): list, view, availability, create, and edit need "reservations.manage" (Admin,
+// Permissions (docs/permissions.md): list, view, availability, create, edit, and room reassignment need "reservations.manage" (Admin,
 // Manager, Receptionist); cancel and no-show need "reservations.cancel" (Admin, Manager); advance payments need
 // "payments.record" (all three); an agreed rate different from the standard rate needs "billing.rateOverride" (Admin,
 // Manager), which the service checks.
@@ -19,6 +19,8 @@ import {
   CreateReservationDto,
   ListReservationsQueryDto,
   NoShowDto,
+  ReassignRoomDto,
+  ReleaseRoomDto,
   RecordPaymentDto,
   UpdateReservationDto,
 } from './dto/reservation.dto.js';
@@ -81,6 +83,36 @@ export class ReservationsController {
     @Req() req: Request,
   ): Promise<ReservationDetail> {
     return this.reservations.update(access(auth), id, body, businessUserActor(auth, getClientMeta(req)));
+  }
+
+  // Moves one booked room of a confirmed reservation to another free room (availability is checked again).
+  @Post(':reservationId/rooms/:reservationRoomId/reassign')
+  @HttpCode(200)
+  @RequirePermissions('reservations.manage')
+  @ApiOperation({ summary: 'Move one booked room to another room' })
+  reassignRoom(
+    @CurrentBusinessUser() auth: BusinessAuthContext,
+    @Param('reservationId', ParseUUIDPipe) id: string,
+    @Param('reservationRoomId', ParseUUIDPipe) reservationRoomId: string,
+    @Body() body: ReassignRoomDto,
+    @Req() req: Request,
+  ): Promise<ReservationDetail> {
+    return this.reservations.reassignRoom(access(auth), id, reservationRoomId, body, businessUserActor(auth, getClientMeta(req)));
+  }
+
+  // Releases an unused room of a partly checked-in reservation (Phase 6.6).
+  @Post(':reservationId/rooms/:reservationRoomId/release')
+  @HttpCode(200)
+  @RequirePermissions('reservations.manage', 'reservations.cancel')
+  @ApiOperation({ summary: 'Release an unused room of a checked-in reservation' })
+  releaseRoom(
+    @CurrentBusinessUser() auth: BusinessAuthContext,
+    @Param('reservationId', ParseUUIDPipe) id: string,
+    @Param('reservationRoomId', ParseUUIDPipe) reservationRoomId: string,
+    @Body() body: ReleaseRoomDto,
+    @Req() req: Request,
+  ): Promise<ReservationDetail> {
+    return this.reservations.releaseRoom(access(auth), id, reservationRoomId, body, businessUserActor(auth, getClientMeta(req)));
   }
 
   // Cancels a confirmed reservation with a reason.

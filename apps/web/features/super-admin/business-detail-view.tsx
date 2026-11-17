@@ -1,5 +1,6 @@
-// Business page for the Super Admin: details, edit, suspend/reactivate (with confirmation), delete (archive), and the
-// business's locations and users (each with Delete).
+// Business page for the Super Admin: details, edit, suspend/reactivate (with confirmation), delete (archive), the
+// business's locations, the floors, room types, and rooms of each location (like the New business setup page), its users
+// (each with Delete), and its WhatsApp settings for sending advertisements.
 'use client';
 
 import Link from 'next/link';
@@ -19,6 +20,8 @@ import { useApiQuery } from '@/hooks/use-api-query';
 import { apiRequest } from '@/lib/api-client';
 import { formatDateTime, titleCase } from '@/lib/format';
 import { BusinessForm, businessFormValues } from './business-form';
+import { BusinessPropertySection } from './business-property-section';
+import { BusinessWhatsAppSection } from './business-whatsapp-section';
 
 // Shows one label/value pair in the details list.
 function Detail({ label, value }: { label: string; value: string | null }) {
@@ -112,7 +115,10 @@ export function BusinessDetailView() {
       )}
 
       <LocationsSection businessId={business.id} />
+      {/* Floors, room types, and rooms of the locations, like the New business setup page (owner request 2026-11-16). */}
+      <BusinessPropertySection businessId={business.id} />
       <UsersSection businessId={business.id} />
+      <BusinessWhatsAppSection businessId={business.id} />
 
       <ConfirmDialog
         open={dialog === 'suspend'}

@@ -29,6 +29,8 @@ export interface GuestSummary {
   /** For example "•••• 4321"; null when no ID number is recorded. */
   idDocumentNumberMasked: string | null;
   reservationCount: number;
+  /** The guest agreed to receive offers (advertisements) on WhatsApp. */
+  whatsappOffersConsent: boolean;
   createdAt: string;
 }
 
@@ -44,6 +46,8 @@ export interface GuestDetail extends Omit<GuestSummary, 'idDocumentNumberMasked'
   notes: string | null;
   /** Uploaded ID files (Phase 6.2 adds uploads); deleted files are not counted. */
   documentCount: number;
+  /** When the WhatsApp offers agreement was recorded; null when the guest has not agreed. */
+  whatsappOffersConsentAt: string | null;
   updatedAt: string;
 }
 

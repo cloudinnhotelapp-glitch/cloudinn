@@ -27,6 +27,13 @@ export function configureApp(app: INestApplication): void {
   // Reads session cookies from incoming requests.
   app.use(cookieParser());
 
+  // Every API answer belongs to one signed-in user (or is an error), so no browser cache, proxy, or CDN may keep it
+  // (SSR audit 2026-11-16). Routes that set their own Cache-Control (private files, Swagger) replace this default.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    next();
+  });
+
   // Origins allowed to send state-changing requests: the web app, plus the API's own Swagger page in development.
   const allowedOrigins = new Set([frontendOrigin]);
   if (isDevelopment) allowedOrigins.add(`http://localhost:${config.get('API_PORT', { infer: true })}`);

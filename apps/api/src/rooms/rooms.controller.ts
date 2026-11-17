@@ -1,5 +1,6 @@
 // Room endpoints for business users (/api/v1/rooms, including the status board) and the Super Admin
-// (/api/v1/super-admin/locations/:locationId/rooms). Viewing needs property.view or roomStatus.view; changes need property.manage, which no business role holds (Super Admin only).
+// (/api/v1/super-admin/locations/:locationId/rooms). Viewing needs property.view or roomStatus.view; changes need property.manage (Admin, Manager, Receptionist; owner decision 2026-11-12), and deleting needs
+// property.delete, which no business role holds (Super Admin only).
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
@@ -52,7 +53,7 @@ export class RoomsController {
     return this.rooms.get(businessPropertyScope(auth), roomId);
   }
 
-  // Creates a room (property.manage: no business role, always 403).
+  // Creates a room (property.manage: Admin, Manager, Receptionist).
   @Post()
   @RequirePermissions('property.manage')
   @ApiOperation({ summary: 'Create a room' })
@@ -60,7 +61,7 @@ export class RoomsController {
     return this.rooms.create(businessPropertyScope(auth), body, businessUserActor(auth, getClientMeta(req)));
   }
 
-  // Edits a room, including its operational status (property.manage: no business role, always 403).
+  // Edits a room, including its operational status (property.manage: Admin, Manager, Receptionist).
   @Patch(':roomId')
   @RequirePermissions('property.manage')
   @ApiOperation({ summary: 'Edit a room' })
@@ -73,9 +74,9 @@ export class RoomsController {
     return this.rooms.update(businessPropertyScope(auth), roomId, body, businessUserActor(auth, getClientMeta(req)));
   }
 
-  // Deletes a room (property.manage: no business role, always 403; only the Super Admin deletes).
+  // Deletes a room (property.delete: no business role, always 403; only the Super Admin deletes).
   @Delete(':roomId')
-  @RequirePermissions('property.manage')
+  @RequirePermissions('property.delete')
   @ApiOperation({ summary: 'Delete a room' })
   remove(@CurrentBusinessUser() auth: BusinessAuthContext, @Param('roomId', ParseUUIDPipe) roomId: string, @Req() req: Request): Promise<DeletionResult> {
     return this.rooms.remove(businessPropertyScope(auth), roomId, businessUserActor(auth, getClientMeta(req)));

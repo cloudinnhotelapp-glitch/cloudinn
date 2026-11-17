@@ -2,7 +2,7 @@
 // optional fields become null, emails are lower-cased, and ID numbers are upper-cased so duplicates are found reliably.
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength, Validate, ValidatorConstraint, type ValidatorConstraintInterface } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength, Validate, ValidatorConstraint, type ValidatorConstraintInterface } from 'class-validator';
 import { GUEST_DOCUMENT_TYPES, type GuestDocumentType } from '@hms/shared';
 import { trimOrNull } from '../../businesses/dto/business.dto.js';
 import { PaginationQueryDto } from '../../common/http/pagination.js';
@@ -138,6 +138,11 @@ export class CreateGuestDto {
   @IsString()
   @MaxLength(2000)
   notes?: string | null;
+
+  @ApiPropertyOptional({ description: 'The guest agreed to receive offers (advertisements) on WhatsApp; recorded with the time it was given.' })
+  @IsOptional()
+  @IsBoolean({ message: 'whatsappOffersConsent must be true or false' })
+  whatsappOffersConsent?: boolean;
 }
 
 // Fields for editing a guest: any subset; null clears an optional field (the full name cannot be cleared).

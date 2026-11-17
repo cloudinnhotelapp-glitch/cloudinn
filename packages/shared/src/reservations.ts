@@ -113,6 +113,8 @@ export interface ReservationRoomDetail {
   capacity: number;
   maxExtraBeds: number;
   extraBeds: number;
+  /** The room's actual (standard) rate today; the agreed nightlyRate may differ. */
+  standardRate: string;
   nightlyRate: string;
   extraBedRate: string;
   rateOverridden: boolean;
@@ -120,6 +122,16 @@ export interface ReservationRoomDetail {
   /** nights x nightlyRate + nights x extraBeds x extraBedRate. */
   amount: string;
   status: string;
+  /** The in-house or finished stay of this room, once checked in (Phase 6.5). */
+  stay: {
+    id: string;
+    status: 'IN_HOUSE' | 'CHECKED_OUT';
+    checkedInAt: string;
+    checkedOutAt: string | null;
+    grcNumber: string | null;
+    /** The room's bill, once checked out (Phase 6.6). */
+    bill: { id: string; billNumber: string | null; total: string; balance: string } | null;
+  } | null;
 }
 
 // One advance payment entry.
@@ -157,31 +169,74 @@ export interface ReservationDetail extends Omit<ReservationListItem, 'rooms'> {
   cancelledBy: { id: string; name: string } | null;
   history: ReservationHistoryEntry[];
   /** Which actions the current user may take right now (also enforced by the API). */
-  allowed: { edit: boolean; cancel: boolean; noShow: boolean; recordPayment: boolean; overrideRate: boolean };
+  allowed: { edit: boolean; cancel: boolean; noShow: boolean; recordPayment: boolean; overrideRate: boolean; checkIn: boolean; releaseRooms: boolean };
 }
 
-// One room in the availability check for a date range.
+// Operational, occupancy, and housekeeping states of a room, mirrored from the database enums.
+export type RoomOperationalState = 'ACTIVE' | 'OUT_OF_SERVICE' | 'INACTIVE';
+export type RoomOccupancyState = 'VACANT' | 'OCCUPIED';
+export type RoomHousekeepingState = 'CLEAN' | 'DIRTY' | 'CLEANING';
+
+// Estimated charges for one room over the searched stay, before tax-inclusive rounding by the server at booking time.
+export interface AvailabilityStayEstimate {
+  /** Extra beds counted in this estimate: the beds the searched guests need in this room (0 when none were given). */
+  extraBeds: number;
+  roomCharges: string;
+  extraBedCharges: string;
+  subtotal: string;
+  tax: string;
+  total: string;
+}
+
+// One room in the availability check for a date range (Phase 6.3, extended in Phase 6.4). Holds room and price
+// details only, never guest names or contact details; a blocking reservation is named by its number alone.
 export interface AvailabilityRoom {
   id: string;
   roomNumber: string;
+  floorId: string;
   floorName: string;
   roomTypeId: string;
   roomTypeName: string;
+  /** Guests the room sleeps without extra beds. */
   capacity: number;
   maxExtraBeds: number;
   standardRate: string;
   extraBedRate: string;
+  /** Nightly rate that applies to the searched dates (the standard rate; seasonal rates are not part of Version 1). */
+  applicableRate: string;
+  operationalStatus: RoomOperationalState;
+  occupancyStatus: RoomOccupancyState;
+  housekeepingStatus: RoomHousekeepingState;
   available: boolean;
   /** Why the room cannot be booked, when it is not available. */
   reason: string | null;
+  /** Extra beds the searched guests would need in this room alone (0 when no guest count was given). */
+  extraBedsNeeded: number;
+  estimate: AvailabilityStayEstimate;
+  /** Facts that do not block the booking, for example "Needs cleaning" or a same-day departure time. */
+  notices: string[];
 }
 
-// Availability for a date range in the active location.
+// Floors and room types of the searched location, for the filter dropdowns (independent of the filters applied).
+export interface AvailabilityFacets {
+  floors: { id: string; name: string }[];
+  roomTypes: { id: string; name: string }[];
+}
+
+// Availability for a date range in one location.
 export interface RoomAvailability {
   checkInDate: string;
   checkOutDate: string;
+  checkInTime: string | null;
+  checkOutTime: string | null;
   nights: number;
+  location: { id: string; name: string; timezone: string };
+  /** Today's date at the hotel, in its own time zone. */
+  today: string;
   currencyCode: string;
   taxRatePercent: string;
   rooms: AvailabilityRoom[];
+  /** Rooms matching the filters, and how many of them are available. */
+  counts: { matching: number; available: number };
+  facets: AvailabilityFacets;
 }

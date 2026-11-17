@@ -3,7 +3,8 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
+import { startFresh } from '@/lib/start-fresh';
 import type { SuperAdminProfile } from '@hms/shared';
 import { AuthError, AuthField, AuthSubmit } from '@/components/auth/auth-fields';
 import { apiRequest, errorMessages } from '@/lib/api-client';
@@ -16,7 +17,6 @@ function safeNext(next: string | null): string {
 
 // Renders the form and redirects after a successful login (to the password change first, if required).
 export function SuperAdminLoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,7 +35,8 @@ export function SuperAdminLoginForm() {
     try {
       const profile = await apiRequest<SuperAdminProfile>('POST', '/super-admin/auth/login', { body: { email: email.trim(), password } });
       setPassword('');
-      router.replace(profile.mustChangePassword ? CHANGE_PASSWORD_PATH : safeNext(searchParams.get('next')));
+      // A full page load, so nothing kept in memory from an earlier session shows (see lib/start-fresh.ts).
+      startFresh(profile.mustChangePassword ? CHANGE_PASSWORD_PATH : safeNext(searchParams.get('next')));
     } catch (error) {
       setErrors(errorMessages(error));
       setBusy(false);

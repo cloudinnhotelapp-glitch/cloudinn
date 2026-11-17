@@ -1,5 +1,6 @@
 // Room-type endpoints for business users (/api/v1/room-types) and the Super Admin (/api/v1/super-admin/locations/:locationId/room-types).
-// Business users work in their active location; viewing needs property.view and changes need property.manage, which no business role holds (Super Admin only), so business writes always get 403.
+// Business users work in their active location; viewing needs property.view, changes need property.manage (Admin, Manager,
+// Receptionist; owner decision 2026-11-12), and deleting needs property.delete, which no business role holds (Super Admin only).
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
@@ -32,7 +33,7 @@ export class RoomTypesController {
     return this.roomTypes.list(businessPropertyScope(auth));
   }
 
-  // Creates a room type (property.manage: no business role, always 403).
+  // Creates a room type (property.manage: Admin, Manager, Receptionist).
   @Post()
   @RequirePermissions('property.manage')
   @ApiOperation({ summary: 'Create a room type' })
@@ -40,7 +41,7 @@ export class RoomTypesController {
     return this.roomTypes.create(businessPropertyScope(auth), body, businessUserActor(auth, getClientMeta(req)));
   }
 
-  // Edits a room type (property.manage: no business role, always 403).
+  // Edits a room type (property.manage: Admin, Manager, Receptionist).
   @Patch(':roomTypeId')
   @RequirePermissions('property.manage')
   @ApiOperation({ summary: 'Edit a room type' })
@@ -53,7 +54,7 @@ export class RoomTypesController {
     return this.roomTypes.update(businessPropertyScope(auth), roomTypeId, body, businessUserActor(auth, getClientMeta(req)));
   }
 
-  // Activates a room type (property.manage: no business role, always 403).
+  // Activates a room type (property.manage: Admin, Manager, Receptionist).
   @Post(':roomTypeId/activate')
   @HttpCode(200)
   @RequirePermissions('property.manage')
@@ -62,7 +63,7 @@ export class RoomTypesController {
     return this.roomTypes.setActive(businessPropertyScope(auth), roomTypeId, true, businessUserActor(auth, getClientMeta(req)));
   }
 
-  // Deactivates a room type (property.manage: no business role, always 403).
+  // Deactivates a room type (property.manage: Admin, Manager, Receptionist).
   @Post(':roomTypeId/deactivate')
   @HttpCode(200)
   @RequirePermissions('property.manage')
@@ -71,9 +72,9 @@ export class RoomTypesController {
     return this.roomTypes.setActive(businessPropertyScope(auth), roomTypeId, false, businessUserActor(auth, getClientMeta(req)));
   }
 
-  // Deletes a room type (property.manage: no business role, always 403; only the Super Admin deletes).
+  // Deletes a room type (property.delete: no business role, always 403; only the Super Admin deletes).
   @Delete(':roomTypeId')
-  @RequirePermissions('property.manage')
+  @RequirePermissions('property.delete')
   @ApiOperation({ summary: 'Delete a room type' })
   remove(@CurrentBusinessUser() auth: BusinessAuthContext, @Param('roomTypeId', ParseUUIDPipe) roomTypeId: string, @Req() req: Request): Promise<DeletionResult> {
     return this.roomTypes.remove(businessPropertyScope(auth), roomTypeId, businessUserActor(auth, getClientMeta(req)));

@@ -15,6 +15,7 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { useBusinessSession } from '@/features/business/business-session';
 import { useApiQuery } from '@/hooks/use-api-query';
 import { formatDateTime } from '@/lib/format';
+import { GuestBillsPanel } from '@/features/billing/guest-bills-panel';
 import { GuestDocumentsPanel } from './guest-documents-panel';
 import { GuestFormDialog } from './guest-form-dialog';
 
@@ -67,6 +68,7 @@ export function GuestDetailView() {
           <Item label="Phone">{guest.phone ?? '—'}</Item>
           <Item label="Date of birth">{formatDay(guest.dateOfBirth)}</Item>
           <Item label="Nationality">{guest.nationality ?? '—'}</Item>
+          <Item label="Offers on WhatsApp">{guest.whatsappOffersConsentAt ? `Agreed ${formatDay(guest.whatsappOffersConsentAt.slice(0, 10))}` : 'Not agreed'}</Item>
         </Card>
         <Card title="Address">
           <Item label="Address" wide>
@@ -89,6 +91,7 @@ export function GuestDetailView() {
         {can('guestDocuments.manage') && (
           <GuestDocumentsPanel guestId={guest.id} defaultType={guest.idDocumentType} canDelete={can('guestDocuments.delete')} onChanged={reload} />
         )}
+        {can('billing.manage') && <GuestBillsPanel guestId={guest.id} />}
         {guest.notesVisible && (
           <Card title="Restricted notes" hint="Visible to Admins and Managers only.">
             <Item label="Notes" wide>

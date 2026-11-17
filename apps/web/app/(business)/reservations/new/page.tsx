@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { LoadingState } from '@/components/ui/states';
 import { ReservationForm } from '@/features/reservations/reservation-form';
+import { InteractiveAfterHydration } from '@/components/layout/interactive-after-hydration';
 
 // Browser tab title.
 export const metadata: Metadata = { title: 'New reservation · CloudInn' };
@@ -11,7 +12,9 @@ export const metadata: Metadata = { title: 'New reservation · CloudInn' };
 export default function NewReservationPage() {
   return (
     <Suspense fallback={<LoadingState />}>
-      <ReservationForm />
+      <InteractiveAfterHydration>
+        <ReservationForm />
+      </InteractiveAfterHydration>
     </Suspense>
   );
 }

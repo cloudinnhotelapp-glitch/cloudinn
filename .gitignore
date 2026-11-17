@@ -20,6 +20,9 @@ apps/api/src/generated/
 .env.*
 !.env.example
 
+# Logins of the local sample businesses (apps/api/prisma/sample-data.ts) hold passwords.
+sample-logins.local*.md
+
 # Local development file storage for guest documents (never commit guest IDs).
 storage/
 apps/api/storage/

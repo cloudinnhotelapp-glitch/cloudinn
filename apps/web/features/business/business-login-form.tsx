@@ -5,7 +5,8 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
+import { startFresh } from '@/lib/start-fresh';
 import type { BusinessSessionInfo } from '@hms/shared';
 import { AuthError, AuthField, AuthSubmit } from '@/components/auth/auth-fields';
 import { apiRequest, errorMessages } from '@/lib/api-client';
@@ -29,7 +30,6 @@ function validate(email: string, password: string): FieldErrors {
 
 // Renders email, password (with show/hide), and the sign-in button, then sends the user to the right first page.
 export function BusinessLoginForm({ option }: { option: RoleOption }) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,8 +50,9 @@ export function BusinessLoginForm({ option }: { option: RoleOption }) {
         body: { role: option.role, email: email.trim(), password },
       });
       setPassword('');
-      if (!info.activeLocationId && info.locations.length > 1) router.replace(BUSINESS_PATHS.selectLocation);
-      else router.replace(safeNextPath(searchParams.get('next')) ?? BUSINESS_PATHS.dashboard);
+      // A full page load, so nothing kept in memory from an earlier session shows (see lib/start-fresh.ts).
+      if (!info.activeLocationId && info.locations.length > 1) startFresh(BUSINESS_PATHS.selectLocation);
+      else startFresh(safeNextPath(searchParams.get('next')) ?? BUSINESS_PATHS.dashboard);
     } catch (error) {
       setErrors(errorMessages(error));
       setBusy(false);

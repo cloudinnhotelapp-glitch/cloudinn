@@ -1,12 +1,14 @@
 // Shared top header used by both apps, with the reference app's navbar values: 64px tall, #f2faf6 at 90% with a 16px
 // backdrop blur, a #e2f2e9 bottom border, 24px side padding (12px on phones), and 16px gaps. Left: the menu button (small
 // screens only; wide screens use the sidebar's edge toggle) and the page title with its breadcrumbs. Right: the app's
-// controls (location switcher), a thin divider, and the profile chip.
+// controls (zoom, location switcher), a thin divider, and the profile chip. The zoom control is in every app's header
+// (owner request 2026-11-16).
 'use client';
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Icon } from '@/components/ui/icons';
+import { ZoomControl } from '@/components/ui/zoom-control';
 
 // One breadcrumb step; the last step is the current page and has no link.
 export interface Crumb {
@@ -73,6 +75,10 @@ export function HeaderBar({ sidebarId, sidebarExpanded, onToggleSidebar, title, 
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+        {/* Phones have no room beside the location switcher and profile, and zoom with a pinch instead. */}
+        <div className="hidden sm:block">
+          <ZoomControl />
+        </div>
         {children}
       </div>
     </header>

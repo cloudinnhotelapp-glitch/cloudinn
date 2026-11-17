@@ -7,7 +7,7 @@ import { Icon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DeleteRecordDialog, type DeleteTarget } from '@/components/ui/delete-record';
-import { RowActions } from '@/components/ui/row-actions';
+import { RowActions, RowEditButton, type RowAction } from '@/components/ui/row-actions';
 import { compactInputClass, Field, inputClass, searchInputClass } from '@/components/ui/fields';
 import { useNotify } from '@/components/ui/notifications';
 import { Pagination } from '@/components/ui/pagination';
@@ -51,7 +51,7 @@ function toForm(room: RoomDetail | null): RoomForm {
 }
 
 // Loads rooms, floors, and room types, and renders the filters, table, and add/edit dialog.
-export function RoomsManager({ apiBase, canManage }: PropertyManagerProps) {
+export function RoomsManager({ apiBase, canManage, canDelete = canManage, editButton = false }: PropertyManagerProps) {
   const notify = useNotify();
   const [floorFilter, setFloorFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -222,33 +222,51 @@ export function RoomsManager({ apiBase, canManage }: PropertyManagerProps) {
                   <td>{titleCase(room.housekeepingStatus)}</td>
                   {canManage && (
                     <td className="text-right">
-                      <RowActions
-                        label={`Actions for room ${room.roomNumber}`}
-                        actions={[
-                          {
-                            label: 'Edit room',
-                            icon: 'edit',
-                            tone: 'emerald',
-                            onSelect: () => {
-                              setForm(toForm(room));
-                              setEditing({ room });
-                            },
-                          },
-                          {
-                            label: 'Delete room',
-                            icon: 'trash',
-                            tone: 'red',
-                            onSelect: () =>
-                              setDeleting({
-                                kind: 'room',
-                                name: `Room ${room.roomNumber}`,
-                                details: [`${room.floor.name} · ${room.roomType.name}`, `${OPERATIONAL_LABELS[room.operationalStatus]} · ${titleCase(room.occupancyStatus)}`],
-                                checkPath: `${apiBase}/rooms/${room.id}/deletion-check`,
-                                deletePath: `${apiBase}/rooms/${room.id}`,
-                              }),
-                          },
-                        ]}
-                      />
+                      <div className="inline-flex items-center gap-1.5">
+                        {editButton && <RowEditButton label={`Edit room ${room.roomNumber}`} onClick={() => {
+                            setForm(toForm(room));
+                            setEditing({ room });
+                          }} />}
+                        {/* Rooms have no other menu items for business users (no Delete), so only the pencil shows. */}
+                        {(!editButton || canDelete) && (
+                          <RowActions
+                            label={`Actions for room ${room.roomNumber}`}
+                            actions={[
+                              // Shown as its own pencil button on the business Property Setup page.
+                              ...(editButton
+                                ? []
+                                : ([
+                                    {
+                                      label: 'Edit room',
+                                      icon: 'edit',
+                                      tone: 'emerald',
+                                      onSelect: () => {
+                                        setForm(toForm(room));
+                                        setEditing({ room });
+                                      },
+                                    },
+                                  ] satisfies RowAction[])),
+                              ...(canDelete
+                                ? ([
+                                  {
+                                    label: 'Delete room',
+                                    icon: 'trash',
+                                    tone: 'red',
+                                    onSelect: () =>
+                                      setDeleting({
+                                        kind: 'room',
+                                        name: `Room ${room.roomNumber}`,
+                                        details: [`${room.floor.name} · ${room.roomType.name}`, `${OPERATIONAL_LABELS[room.operationalStatus]} · ${titleCase(room.occupancyStatus)}`],
+                                        checkPath: `${apiBase}/rooms/${room.id}/deletion-check`,
+                                        deletePath: `${apiBase}/rooms/${room.id}`,
+                                      }),
+                                  },
+                                  ] satisfies RowAction[])
+                                : []),
+                            ]}
+                          />
+                        )}
+                        </div>
                     </td>
                   )}
                 </tr>
@@ -322,7 +340,7 @@ export function RoomsManager({ apiBase, canManage }: PropertyManagerProps) {
           <input id="room-notes" className={inputClass} maxLength={500} value={form.notes} onChange={(e) => set('notes')(e.target.value)} />
         </Field>
       </ConfirmDialog>
-      {canManage && <DeleteRecordDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={rooms.reload} />}
+      {canDelete && <DeleteRecordDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={rooms.reload} />}
     </section>
   );
 }

@@ -43,11 +43,12 @@ enum LocationStatus {
   INACTIVE
 }
 
-/// The one fixed role a business user has.
+/// The one fixed role a business user has. STAFF are employees who only record their own attendance, through a separate login.
 enum BusinessUserRole {
   ADMIN
   MANAGER
   RECEPTIONIST
+  STAFF
 }
 
 /// Whether a business user may log in.
@@ -166,6 +167,65 @@ enum GuestDocumentType {
   OTHER
 }
 
+/// Colour theme a business user chose; no value means the app's default (following the device).
+enum ThemePreference {
+  LIGHT
+  DARK
+}
+
+/// How a salary is reduced for unpaid absent days.
+enum SalaryDeductionMode {
+  /// No deduction.
+  NONE
+  /// Base salary divided by the expected working days, for each unpaid absent day.
+  PRO_RATA
+  /// A fixed amount for each unpaid absent day.
+  FIXED_PER_DAY
+}
+
+/// Where a punch-out may be made.
+enum AttendanceCheckOutPolicy {
+  /// The device must be inside the location's attendance area.
+  INSIDE_AREA
+  /// The device's position is recorded, but a punch-out outside the area is accepted and marked as such.
+  ANY_LOCATION
+}
+
+/// How an attendance record came to exist.
+enum AttendanceSource {
+  PUNCH
+  CORRECTION
+}
+
+/// What an attendance correction request is about.
+enum AttendanceCorrectionType {
+  FORGOT_CHECK_IN
+  FORGOT_CHECK_OUT
+  WRONG_TIME
+  LOCATION_PROBLEM
+}
+
+/// Progress of an attendance correction request.
+enum AttendanceCorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Progress of one WhatsApp send of an advertisement.
+enum AdWhatsAppSendStatus {
+  SENDING
+  COMPLETED
+  FAILED
+}
+
+/// Outcome for one guest of a WhatsApp advertisement send.
+enum AdWhatsAppRecipientStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 // ───────────────────────────── Platform ─────────────────────────────
 
 /// Stores one platform Super Admin account (created only by the seed; there is no sign-up UI).
@@ -183,6 +243,8 @@ model SuperAdmin {
   failedLoginCount   Int              @default(0)
   lockedUntil        DateTime?        @db.Timestamptz(3)
   lastLoginAt        DateTime?        @db.Timestamptz(3)
+  /// The Super Admin's chosen colour theme; a display preference only, never used for authorization. No value follows the device.
+  themePreference    ThemePreference?
   createdAt          DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime         @updatedAt @db.Timestamptz(3)
 
@@ -243,10 +305,17 @@ model Business {
   createdAt        DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime       @updatedAt @db.Timestamptz(3)
 
-  locations Location[]
-  users     BusinessUser[]
-  guests    Guest[]
-  auditLogs AuditLog[]
+  locations         Location[]
+  users             BusinessUser[]
+  guests            Guest[]
+  auditLogs         AuditLog[]
+  advertisements    Advertisement[]
+  staffDepartments  StaffDepartment[]
+  staffDesignations StaffDesignation[]
+  staffShifts       StaffShift[]
+  whatsAppSettings  BusinessWhatsAppSettings?
+  grcSequences      GrcSequence[]
+  adWhatsAppSends   AdWhatsAppSend[]
 
   @@index([status])
   @@map("businesses")
@@ -254,44 +323,75 @@ model Business {
 
 /// Stores one hotel location (property) of a business, with its local time zone, currency, and tax rate.
 model Location {
-  id             String         @id @default(uuid(7)) @db.Uuid
-  businessId     String         @db.Uuid
-  name           String         @db.VarChar(160)
+  id                           String                   @id @default(uuid(7)) @db.Uuid
+  businessId                   String                   @db.Uuid
+  name                         String                   @db.VarChar(160)
   /// Short code used in printed numbers such as GRC and bill numbers.
-  code           String         @db.VarChar(12)
-  address        String?        @db.VarChar(500)
-  phone          String?        @db.VarChar(40)
+  code                         String                   @db.VarChar(12)
+  address                      String?                  @db.VarChar(500)
+  phone                        String?                  @db.VarChar(40)
   /// IANA time zone (for example "Asia/Kolkata") used for "today" in dashboards.
-  timezone       String         @db.VarChar(64)
+  timezone                     String                   @db.VarChar(64)
   /// ISO 4217 currency code (for example "INR").
-  currencyCode   String         @db.Char(3)
+  currencyCode                 String                   @db.Char(3)
   /// Configurable tax rate applied to taxable charges, as a percentage (0 to 100).
-  taxRatePercent Decimal        @default(0) @db.Decimal(5, 2)
-  status         LocationStatus @default(ACTIVE)
+  taxRatePercent               Decimal                  @default(0) @db.Decimal(5, 2)
+  /// Standard check-in time of the property ("HH:mm", hotel time); the default expected arrival (Phase 6.6).
+  standardCheckInTime          String                   @default("14:00") @db.VarChar(5)
+  /// Standard check-out time of the property ("HH:mm", hotel time); the default expected departure (Phase 6.6).
+  standardCheckOutTime         String                   @default("11:00") @db.VarChar(5)
+  /// When true, a guest needs at least one uploaded ID document before check-in; Admins and Managers may override it
+  /// with a reason, which is audited (Phase 6.6). The ID type and number are always required.
+  requireIdDocumentUpload      Boolean                  @default(false)
+  /// Link to the hotel's guest feedback form (https), sent in the WhatsApp feedback message (Room Dashboard); empty = no link.
+  guestFeedbackUrl             String?                  @db.VarChar(500)
+  /// Centre of the area staff must be inside to mark attendance; all three attendance fields are set together or not at all.
+  attendanceLatitude           Decimal?                 @db.Decimal(9, 6)
+  attendanceLongitude          Decimal?                 @db.Decimal(9, 6)
+  /// Allowed distance from that centre, in metres.
+  attendanceRadiusMeters       Int?
+  /// When false, staff cannot punch in or out at this location.
+  attendanceEnabled            Boolean                  @default(true)
+  /// Expected start of work ("HH:mm", hotel time); a later punch-in beyond the grace period is late. Empty = no lateness tracking.
+  attendanceShiftStart         String?                  @db.VarChar(5)
+  attendanceLateGraceMinutes   Int                      @default(0)
+  /// Hotel-time window in which a punch-in is allowed ("HH:mm"); empty = any time.
+  attendanceCheckInFrom        String?                  @db.VarChar(5)
+  attendanceCheckInUntil       String?                  @db.VarChar(5)
+  attendanceCheckOutPolicy     AttendanceCheckOutPolicy @default(INSIDE_AREA)
+  /// Attendance photos older than this many days are deleted; empty = kept.
+  attendancePhotoRetentionDays Int?
+  status                       LocationStatus           @default(ACTIVE)
   /// Set when the Super Admin deletes (archives) the location: it becomes inactive and is hidden from normal lists; its
   /// property, reservation, billing, and audit records are kept. Locations are never physically deleted.
-  archivedAt     DateTime?      @db.Timestamptz(3)
-  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+  archivedAt                   DateTime?                @db.Timestamptz(3)
+  createdAt                    DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt                    DateTime                 @updatedAt @db.Timestamptz(3)
 
-  business          Business                 @relation(fields: [businessId], references: [id])
-  floors            Floor[]
-  roomTypes         RoomType[]
-  rooms             Room[]
-  userAssignments   UserLocationAssignment[]
-  activeSessions    BusinessUserSession[]
-  guestDocuments    GuestDocument[]
-  reservations      Reservation[]
-  reservationRooms  ReservationRoom[]
-  stays             Stay[]
-  registrationCards GuestRegistrationCard[]
-  numberSequences   NumberSequence[]
-  bills             Bill[]
-  charges           Charge[]
-  payments          Payment[]
-  cleaners          Cleaner[]
-  housekeepingTasks HousekeepingTask[]
-  auditLogs         AuditLog[]
+  business              Business                 @relation(fields: [businessId], references: [id])
+  floors                Floor[]
+  roomTypes             RoomType[]
+  rooms                 Room[]
+  userAssignments       UserLocationAssignment[]
+  activeSessions        BusinessUserSession[]
+  guestDocuments        GuestDocument[]
+  reservations          Reservation[]
+  reservationRooms      ReservationRoom[]
+  stays                 Stay[]
+  stayExtraBeds         StayExtraBed[]
+  stayRoomShifts        StayRoomShift[]
+  registrationCards     GuestRegistrationCard[]
+  numberSequences       NumberSequence[]
+  bills                 Bill[]
+  charges               Charge[]
+  payments              Payment[]
+  paymentAllocations    PaymentAllocation[]
+  cleaners              Cleaner[]
+  housekeepingTasks     HousekeepingTask[]
+  auditLogs             AuditLog[]
+  attendanceRecords     AttendanceRecord[]
+  attendanceCorrections AttendanceCorrection[]
+  salaryStatements      SalaryStatement[]
 
   @@unique([id, businessId])
   @@unique([businessId, name])
@@ -304,8 +404,26 @@ model Location {
 model BusinessUser {
   id                 String             @id @default(uuid(7)) @db.Uuid
   businessId         String             @db.Uuid
-  /// Globally unique and always lowercase, because login has no business selector.
-  email              String             @unique @db.VarChar(254)
+  /// Globally unique and always lowercase, because login has no business selector. Optional only for Staff, who may sign in with a username.
+  email              String?            @unique @db.VarChar(254)
+  /// Staff login name (lowercase, globally unique); an email or a username is always present.
+  username           String?            @unique @db.VarChar(60)
+  /// Employee ID, unique within the business.
+  employeeCode       String?            @db.VarChar(40)
+  phone              String?            @db.VarChar(40)
+  department         String?            @db.VarChar(80)
+  designation        String?            @db.VarChar(80)
+  joiningDate        DateTime?          @db.Date
+  /// Staff Registration details. The department and designation come from the business's own lists (Staff Settings);
+  /// the older free-text department and designation columns above are kept only for accounts created before the lists.
+  departmentId       String?            @db.Uuid
+  designationId      String?            @db.Uuid
+  dateOfBirth        DateTime?          @db.Date
+  /// MALE, FEMALE, or OTHER.
+  gender             String?            @db.VarChar(10)
+  address            String?            @db.VarChar(500)
+  /// False for an employee registered without a login yet (Add Staff Login gives one); such an account cannot sign in.
+  loginEnabled       Boolean            @default(true)
   name               String             @db.VarChar(120)
   /// Fixed role; the role chosen on the login page must match it.
   role               BusinessUserRole
@@ -320,6 +438,8 @@ model BusinessUser {
   /// Set when the Super Admin deletes (archives) the user: the account is deactivated, its sessions end, and it is hidden
   /// from normal lists; reservations, payments, and audit entries that name the user are kept.
   archivedAt         DateTime?          @db.Timestamptz(3)
+  /// The user's chosen colour theme; a display preference only, never used for authorization.
+  themePreference    ThemePreference?
   createdAt          DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
 
@@ -330,15 +450,37 @@ model BusinessUser {
   createdReservations    Reservation[]            @relation("ReservationCreatedBy")
   cancelledReservations  Reservation[]            @relation("ReservationCancelledBy")
   checkedInStays         Stay[]                   @relation("StayCheckedInBy")
+  addedExtraBeds         StayExtraBed[]           @relation("StayExtraBedAddedBy")
+  shiftedRooms           StayRoomShift[]          @relation("StayRoomShiftBy")
   checkedOutStays        Stay[]                   @relation("StayCheckedOutBy")
   issuedRegistrations    GuestRegistrationCard[]
   finalizedBills         Bill[]
   createdCharges         Charge[]
   recordedPayments       Payment[]
-  createdHousekeeping    HousekeepingTask[]
+  paymentAllocations     PaymentAllocation[]
+  createdHousekeeping    HousekeepingTask[]       @relation("HousekeepingTaskCreatedBy")
+  assignedHousekeeping   HousekeepingTask[]       @relation("HousekeepingTaskAssignedStaff")
+  completedHousekeeping  HousekeepingTask[]       @relation("HousekeepingTaskCompletedBy")
   auditLogs              AuditLog[]
+  attendanceRecords      AttendanceRecord[]       @relation("AttendanceStaff")
+  closedAttendance       AttendanceRecord[]       @relation("AttendanceClosedBy")
+  favourites             UserFavourite[]
+  advertisements         Advertisement[]
+  adWhatsAppSends        AdWhatsAppSend[]
+  salary                 StaffSalary?             @relation("SalaryOfStaff")
+  shiftAssignments       StaffShiftAssignment[]   @relation("ShiftOfStaff")
+  attendanceCorrections  AttendanceCorrection[]   @relation("CorrectionOfStaff")
+  reviewedCorrections    AttendanceCorrection[]   @relation("CorrectionReviewedBy")
+  leaveDays              StaffLeaveDay[]          @relation("LeaveOfStaff")
+  approvedLeaveDays      StaffLeaveDay[]          @relation("LeaveApprovedBy")
+  salaryStatements       SalaryStatement[]        @relation("StatementOfStaff")
+  finalizedStatements    SalaryStatement[]        @relation("StatementFinalizedBy")
+  updatedSalaries        StaffSalary[]            @relation("SalaryUpdatedBy")
+  staffDepartment        StaffDepartment?         @relation(fields: [departmentId], references: [id])
+  staffDesignation       StaffDesignation?        @relation(fields: [designationId], references: [id])
 
   @@unique([id, businessId])
+  @@unique([businessId, employeeCode])
   @@index([businessId, role])
   @@map("business_users")
 }
@@ -458,6 +600,8 @@ model Room {
   roomType          RoomType           @relation(fields: [roomTypeId, locationId], references: [id, locationId])
   reservationRooms  ReservationRoom[]
   housekeepingTasks HousekeepingTask[]
+  shiftsFrom        StayRoomShift[]    @relation("StayRoomShiftFrom")
+  shiftsTo          StayRoomShift[]    @relation("StayRoomShiftTo")
 
   @@unique([id, locationId])
   @@unique([locationId, roomNumber])
@@ -469,29 +613,34 @@ model Room {
 
 /// Stores one guest profile, shared by all locations of the same business.
 model Guest {
-  id               String             @id @default(uuid(7)) @db.Uuid
-  businessId       String             @db.Uuid
-  fullName         String             @db.VarChar(160)
-  email            String?            @db.VarChar(254)
-  phone            String?            @db.VarChar(40)
-  addressLine      String?            @db.VarChar(300)
-  city             String?            @db.VarChar(100)
-  state            String?            @db.VarChar(100)
-  country          String?            @db.VarChar(100)
-  postalCode       String?            @db.VarChar(20)
-  nationality      String?            @db.VarChar(100)
-  dateOfBirth      DateTime?          @db.Date
-  idDocumentType   GuestDocumentType?
-  idDocumentNumber String?            @db.VarChar(60)
+  id                      String             @id @default(uuid(7)) @db.Uuid
+  businessId              String             @db.Uuid
+  fullName                String             @db.VarChar(160)
+  email                   String?            @db.VarChar(254)
+  phone                   String?            @db.VarChar(40)
+  addressLine             String?            @db.VarChar(300)
+  city                    String?            @db.VarChar(100)
+  state                   String?            @db.VarChar(100)
+  country                 String?            @db.VarChar(100)
+  postalCode              String?            @db.VarChar(20)
+  nationality             String?            @db.VarChar(100)
+  dateOfBirth             DateTime?          @db.Date
+  idDocumentType          GuestDocumentType?
+  idDocumentNumber        String?            @db.VarChar(60)
   /// Internal notes; only roles with the notes permission may read them.
-  notes            String?
-  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
+  notes                   String?
+  /// The guest agreed to receive offers (advertisements) on WhatsApp; off unless staff record the guest's agreement.
+  whatsappOffersConsent   Boolean            @default(false)
+  /// When that agreement was recorded (cleared when it is withdrawn).
+  whatsappOffersConsentAt DateTime?          @db.Timestamptz(3)
+  createdAt               DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime           @updatedAt @db.Timestamptz(3)
 
-  business          Business                @relation(fields: [businessId], references: [id])
-  documents         GuestDocument[]
-  reservations      Reservation[]
-  registrationCards GuestRegistrationCard[]
+  business             Business                @relation(fields: [businessId], references: [id])
+  documents            GuestDocument[]
+  reservations         Reservation[]
+  registrationCards    GuestRegistrationCard[]
+  adWhatsAppRecipients AdWhatsAppRecipient[]
 
   @@unique([id, businessId])
   @@index([businessId, fullName])
@@ -628,11 +777,68 @@ model Stay {
   registrationCard  GuestRegistrationCard?
   bill              Bill?
   housekeepingTasks HousekeepingTask[]
+  addedExtraBeds    StayExtraBed[]
+  roomShifts        StayRoomShift[]
 
   @@unique([id, locationId])
   @@unique([reservationRoomId, locationId])
   @@index([locationId, status])
   @@map("stays")
+}
+
+/// Stores extra beds added to a room after check-in: charged at checkout from `fromDate` (the hotel's date when they were
+/// added) to the checkout day, at the price per bed and night agreed for the booked room. Beds given at check-in stay on
+/// Stay.extraBeds and are charged for the whole stay.
+model StayExtraBed {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  businessId    String   @db.Uuid
+  locationId    String   @db.Uuid
+  stayId        String   @db.Uuid
+  /// Beds added at once (1 or more).
+  count         Int
+  /// First night the beds are charged (hotel date).
+  fromDate      DateTime @db.Date
+  /// Price per bed and night.
+  extraBedRate  Decimal  @db.Decimal(12, 2)
+  addedByUserId String   @db.Uuid
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  location Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  stay     Stay         @relation(fields: [stayId, locationId], references: [id, locationId])
+  addedBy  BusinessUser @relation("StayExtraBedAddedBy", fields: [addedByUserId, businessId], references: [id, businessId])
+
+  @@index([stayId])
+  @@map("stay_extra_beds")
+}
+
+/// Stores one move of a guest in house to another room. From `shiftDate` (the hotel's date of the move, the first night in
+/// the new room) the stay is charged at `newNightlyRate` (the new room's standard rate); the nights before stay at
+/// `previousNightlyRate` in the previous room. The booked room row (ReservationRoom) itself points at the current room.
+model StayRoomShift {
+  id                         String   @id @default(uuid(7)) @db.Uuid
+  businessId                 String   @db.Uuid
+  locationId                 String   @db.Uuid
+  stayId                     String   @db.Uuid
+  fromRoomId                 String   @db.Uuid
+  toRoomId                   String   @db.Uuid
+  /// First night in the new room (hotel date).
+  shiftDate                  DateTime @db.Date
+  previousNightlyRate        Decimal  @db.Decimal(12, 2)
+  previousRateOverridden     Boolean  @default(false)
+  previousRateOverrideReason String?  @db.VarChar(500)
+  newNightlyRate             Decimal  @db.Decimal(12, 2)
+  reason                     String?  @db.VarChar(300)
+  shiftedByUserId            String   @db.Uuid
+  createdAt                  DateTime @default(now()) @db.Timestamptz(3)
+
+  location  Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  stay      Stay         @relation(fields: [stayId, locationId], references: [id, locationId])
+  fromRoom  Room         @relation("StayRoomShiftFrom", fields: [fromRoomId, locationId], references: [id, locationId])
+  toRoom    Room         @relation("StayRoomShiftTo", fields: [toRoomId, locationId], references: [id, locationId])
+  shiftedBy BusinessUser @relation("StayRoomShiftBy", fields: [shiftedByUserId, businessId], references: [id, businessId])
+
+  @@index([stayId])
+  @@map("stay_room_shifts")
 }
 
 /// Stores the Guest Registration Card completed at check-in, with a snapshot of guest details and a unique GRC number.
@@ -707,11 +913,12 @@ model Bill {
   createdAt         DateTime   @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime   @updatedAt @db.Timestamptz(3)
 
-  location    Location      @relation(fields: [locationId, businessId], references: [id, businessId])
-  stay        Stay          @relation(fields: [stayId, locationId], references: [id, locationId])
-  finalizedBy BusinessUser? @relation(fields: [finalizedByUserId], references: [id])
+  location    Location            @relation(fields: [locationId, businessId], references: [id, businessId])
+  stay        Stay                @relation(fields: [stayId, locationId], references: [id, locationId])
+  finalizedBy BusinessUser?       @relation(fields: [finalizedByUserId], references: [id])
   charges     Charge[]
   payments    Payment[]
+  allocations PaymentAllocation[]
 
   @@unique([id, locationId])
   @@unique([stayId, locationId])
@@ -772,16 +979,40 @@ model Payment {
   reversesPaymentId String?          @unique @db.Uuid
   createdAt         DateTime         @default(now()) @db.Timestamptz(3)
 
-  location        Location     @relation(fields: [locationId, businessId], references: [id, businessId])
-  reservation     Reservation  @relation(fields: [reservationId, locationId], references: [id, locationId])
-  bill            Bill?        @relation(fields: [billId], references: [id])
-  recordedBy      BusinessUser @relation(fields: [recordedByUserId, businessId], references: [id, businessId])
-  reversesPayment Payment?     @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
-  reversedBy      Payment?     @relation("PaymentReversal")
+  location        Location            @relation(fields: [locationId, businessId], references: [id, businessId])
+  reservation     Reservation         @relation(fields: [reservationId, locationId], references: [id, locationId])
+  bill            Bill?               @relation(fields: [billId], references: [id])
+  recordedBy      BusinessUser        @relation(fields: [recordedByUserId, businessId], references: [id, businessId])
+  reversesPayment Payment?            @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
+  reversedBy      Payment?            @relation("PaymentReversal")
+  allocations     PaymentAllocation[]
 
   @@index([reservationId])
   @@index([billId])
   @@map("payments")
+}
+
+/// Stores how much of one payment is applied to one room bill (Phase 6.6). A reservation-level payment (such as an advance
+/// for several rooms) can be split across the room bills, never beyond its own amount in total; rows are append-only.
+model PaymentAllocation {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  businessId      String   @db.Uuid
+  locationId      String   @db.Uuid
+  paymentId       String   @db.Uuid
+  billId          String   @db.Uuid
+  /// Always positive.
+  amount          Decimal  @db.Decimal(12, 2)
+  createdByUserId String   @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  location  Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  payment   Payment      @relation(fields: [paymentId], references: [id])
+  bill      Bill         @relation(fields: [billId, locationId], references: [id, locationId])
+  createdBy BusinessUser @relation(fields: [createdByUserId, businessId], references: [id, businessId])
+
+  @@unique([paymentId, billId])
+  @@index([billId])
+  @@map("payment_allocations")
 }
 
 // ───────────────────────────── Housekeeping ─────────────────────────────
@@ -820,6 +1051,11 @@ model HousekeepingTask {
   startedAt         DateTime?              @db.Timestamptz(3)
   completedAt       DateTime?              @db.Timestamptz(3)
   createdByUserId   String?                @db.Uuid
+  /// Phase 8 (owner decision 2026-11-16): tasks are assigned to registered staff of the location (not the cleaners table);
+  /// the server checks the staff member is active and assigned to the task's location.
+  assignedStaffId   String?                @db.Uuid
+  /// Who marked the task done (a front-desk user or the assigned staff member).
+  completedByUserId String?                @db.Uuid
   createdAt         DateTime               @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime               @updatedAt @db.Timestamptz(3)
 
@@ -827,11 +1063,415 @@ model HousekeepingTask {
   room            Room          @relation(fields: [roomId, locationId], references: [id, locationId])
   stay            Stay?         @relation(fields: [stayId], references: [id])
   assignedCleaner Cleaner?      @relation(fields: [assignedCleanerId], references: [id])
-  createdBy       BusinessUser? @relation(fields: [createdByUserId], references: [id])
+  createdBy       BusinessUser? @relation("HousekeepingTaskCreatedBy", fields: [createdByUserId], references: [id])
+  assignedStaff   BusinessUser? @relation("HousekeepingTaskAssignedStaff", fields: [assignedStaffId], references: [id])
+  completedBy     BusinessUser? @relation("HousekeepingTaskCompletedBy", fields: [completedByUserId], references: [id])
 
   @@index([locationId, status])
   @@index([roomId])
+  @@index([assignedStaffId, status])
   @@map("housekeeping_tasks")
+}
+
+// ───────────────────────────── Staff ─────────────────────────────
+
+/// Stores one staff member's attendance at one location on one day. Created only after the device was verified inside the
+/// location's attendance area; raw device coordinates are not kept, only the measured distance and accuracy.
+model AttendanceRecord {
+  id                        String           @id @default(uuid(7)) @db.Uuid
+  businessId                String           @db.Uuid
+  locationId                String           @db.Uuid
+  userId                    String           @db.Uuid
+  /// Hotel-local date of the check-in.
+  attendanceDate            DateTime         @db.Date
+  checkInAt                 DateTime         @default(now()) @db.Timestamptz(3)
+  checkOutAt                DateTime?        @db.Timestamptz(3)
+  /// The recorded result of the server's location check at check-in.
+  locationVerified          Boolean          @default(true)
+  /// Null on a record created by an approved correction.
+  checkInDistanceMeters     Int?
+  checkInAccuracyMeters     Int?
+  checkOutDistanceMeters    Int?
+  checkOutAccuracyMeters    Int?
+  /// Randomized private object key of the selfie; never shown to users.
+  selfieStorageKey          String?          @unique @db.VarChar(255)
+  selfieContentType         String?          @db.VarChar(100)
+  selfieSizeBytes           Int?
+  selfieSha256              String?          @db.Char(64)
+  /// Photo taken at punch-out.
+  checkOutSelfieStorageKey  String?          @unique @db.VarChar(255)
+  checkOutSelfieContentType String?          @db.VarChar(100)
+  checkOutSelfieSizeBytes   Int?
+  checkOutSelfieSha256      String?          @db.Char(64)
+  /// Whether the punch-out was inside the area (false only under the ANY_LOCATION policy).
+  checkOutLocationVerified  Boolean?
+  /// Set when the photos were deleted under the location's retention policy.
+  selfiePurgedAt            DateTime?        @db.Timestamptz(3)
+  source                    AttendanceSource @default(PUNCH)
+  /// Minutes after the shift start and grace period; 0 = on time or not tracked.
+  lateMinutes               Int              @default(0)
+  /// Set when an Admin closed a forgotten check-in instead of the staff member checking out.
+  closedByUserId            String?          @db.Uuid
+  closeReason               String?          @db.VarChar(500)
+  createdAt                 DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt                 DateTime         @updatedAt @db.Timestamptz(3)
+
+  location    Location               @relation(fields: [locationId, businessId], references: [id, businessId])
+  user        BusinessUser           @relation("AttendanceStaff", fields: [userId, businessId], references: [id, businessId])
+  closedBy    BusinessUser?          @relation("AttendanceClosedBy", fields: [closedByUserId], references: [id])
+  corrections AttendanceCorrection[]
+
+  @@unique([userId, locationId, attendanceDate])
+  @@index([locationId, attendanceDate])
+  @@index([businessId, userId, attendanceDate])
+  @@map("attendance_records")
+}
+
+/// Stores one request to correct attendance; staff never edit attendance directly, and a reviewer cannot approve their own request.
+model AttendanceCorrection {
+  id                  String                     @id @default(uuid(7)) @db.Uuid
+  businessId          String                     @db.Uuid
+  locationId          String                     @db.Uuid
+  userId              String                     @db.Uuid
+  attendanceRecordId  String?                    @db.Uuid
+  attendanceDate      DateTime                   @db.Date
+  type                AttendanceCorrectionType
+  requestedCheckInAt  DateTime?                  @db.Timestamptz(3)
+  requestedCheckOutAt DateTime?                  @db.Timestamptz(3)
+  reason              String                     @db.VarChar(500)
+  status              AttendanceCorrectionStatus @default(PENDING)
+  reviewedByUserId    String?                    @db.Uuid
+  reviewedAt          DateTime?                  @db.Timestamptz(3)
+  reviewNote          String?                    @db.VarChar(500)
+  createdAt           DateTime                   @default(now()) @db.Timestamptz(3)
+
+  location   Location          @relation(fields: [locationId, businessId], references: [id, businessId])
+  user       BusinessUser      @relation("CorrectionOfStaff", fields: [userId, businessId], references: [id, businessId])
+  reviewedBy BusinessUser?     @relation("CorrectionReviewedBy", fields: [reviewedByUserId], references: [id])
+  record     AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id])
+
+  @@index([locationId, status])
+  @@index([userId, attendanceDate])
+  @@map("attendance_corrections")
+}
+
+/// Stores one approved leave day of a staff member; it is not counted as an absence.
+model StaffLeaveDay {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  businessId       String   @db.Uuid
+  userId           String   @db.Uuid
+  leaveDate        DateTime @db.Date
+  note             String?  @db.VarChar(300)
+  approvedByUserId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  user       BusinessUser @relation("LeaveOfStaff", fields: [userId, businessId], references: [id, businessId])
+  approvedBy BusinessUser @relation("LeaveApprovedBy", fields: [approvedByUserId, businessId], references: [id, businessId])
+
+  @@unique([userId, leaveDate])
+  @@index([businessId, leaveDate])
+  @@map("staff_leave_days")
+}
+
+/// Stores one finalized salary for a month; later attendance changes never alter it except through an audited recalculation.
+model SalaryStatement {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  businessId          String   @db.Uuid
+  locationId          String   @db.Uuid
+  userId              String   @db.Uuid
+  /// Month as "YYYY-MM".
+  period              String   @db.Char(7)
+  baseSalary          Decimal  @db.Decimal(12, 2)
+  expectedWorkingDays Int
+  presentDays         Int
+  approvedLeaveDays   Int
+  absentDays          Int
+  unpaidAbsentDays    Int
+  lateDays            Int
+  attendanceAmount    Decimal  @db.Decimal(12, 2)
+  attendanceDeduction Decimal  @db.Decimal(12, 2)
+  lateDeduction       Decimal  @db.Decimal(12, 2)
+  salaryType          String   @default("MONTHLY") @db.VarChar(10)
+  paidLeaveDays       Int      @default(0)
+  /// Amounts the month's percentages produced: DA and allowance added; ESI, PF, and advance deducted (never below zero).
+  da                  Decimal  @default(0) @db.Decimal(12, 2)
+  allowance           Decimal  @default(0) @db.Decimal(12, 2)
+  esi                 Decimal  @default(0) @db.Decimal(12, 2)
+  pf                  Decimal  @default(0) @db.Decimal(12, 2)
+  advance             Decimal  @default(0) @db.Decimal(12, 2)
+  /// The percentages in effect for the month (of the basic salary; of the wages earned for daily wages).
+  daPercent           Decimal  @default(0) @db.Decimal(5, 2)
+  allowancePercent    Decimal  @default(0) @db.Decimal(5, 2)
+  esiPercent          Decimal  @default(0) @db.Decimal(5, 2)
+  pfPercent           Decimal  @default(0) @db.Decimal(5, 2)
+  advancePercent      Decimal  @default(0) @db.Decimal(5, 2)
+  finalSalary         Decimal  @db.Decimal(12, 2)
+  finalizedByUserId   String   @db.Uuid
+  finalizedAt         DateTime @default(now()) @db.Timestamptz(3)
+  recalculationCount  Int      @default(0)
+  recalculationReason String?  @db.VarChar(500)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+
+  location    Location     @relation(fields: [locationId, businessId], references: [id, businessId])
+  user        BusinessUser @relation("StatementOfStaff", fields: [userId, businessId], references: [id, businessId])
+  finalizedBy BusinessUser @relation("StatementFinalizedBy", fields: [finalizedByUserId, businessId], references: [id, businessId])
+
+  @@unique([userId, period])
+  @@index([businessId, period])
+  @@map("salary_statements")
+}
+
+/// Stores one department of a business's staff (Staff Settings).
+model StaffDepartment {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  businessId String   @db.Uuid
+  name       String   @db.VarChar(80)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  business     Business           @relation(fields: [businessId], references: [id])
+  designations StaffDesignation[]
+  users        BusinessUser[]
+
+  @@unique([businessId, name])
+  @@map("staff_departments")
+}
+
+/// Stores one designation (job title) within a department (Staff Settings).
+model StaffDesignation {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  businessId     String   @db.Uuid
+  departmentId   String   @db.Uuid
+  name           String   @db.VarChar(80)
+  isActive       Boolean  @default(true)
+  /// Leave Settings: absent days per month that are not deducted from salary; empty = not set for this designation.
+  leavesPerMonth Int?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  business   Business        @relation(fields: [businessId], references: [id])
+  department StaffDepartment @relation(fields: [departmentId], references: [id])
+  users      BusinessUser[]
+
+  @@unique([departmentId, name])
+  @@index([businessId])
+  @@map("staff_designations")
+}
+
+/// Stores one work shift of a business (Staff Settings); times are local clock times "HH:MM". A shift may end the next morning.
+model StaffShift {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  businessId String   @db.Uuid
+  name       String   @db.VarChar(60)
+  startTime  String   @db.VarChar(5)
+  endTime    String   @db.VarChar(5)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  business    Business               @relation(fields: [businessId], references: [id])
+  assignments StaffShiftAssignment[]
+
+  @@unique([businessId, name])
+  @@map("staff_shifts")
+}
+
+/// Stores the shift one staff member works on one date; late arrival that day is measured from the shift's start.
+model StaffShiftAssignment {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  businessId       String   @db.Uuid
+  userId           String   @db.Uuid
+  shiftId          String   @db.Uuid
+  shiftDate        DateTime @db.Date
+  assignedByUserId String   @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  user  BusinessUser @relation("ShiftOfStaff", fields: [userId, businessId], references: [id, businessId])
+  shift StaffShift   @relation(fields: [shiftId], references: [id])
+
+  @@unique([userId, shiftDate])
+  @@index([businessId, shiftDate])
+  @@index([shiftId])
+  @@map("staff_shift_assignments")
+}
+
+/// Stores one page a business user pinned to their dashboard; the item key refers to the app's fixed list of pages.
+model UserFavourite {
+  businessId String   @db.Uuid
+  userId     String   @db.Uuid
+  itemKey    String   @db.VarChar(60)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  user BusinessUser @relation(fields: [userId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@id([userId, itemKey])
+  @@index([businessId])
+  @@map("user_favourites")
+}
+
+/// Stores one advertisement of a business; the image lives in private storage, never in PostgreSQL.
+model Advertisement {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  businessId       String    @db.Uuid
+  title            String    @db.VarChar(120)
+  description      String?   @db.VarChar(500)
+  linkUrl          String?   @db.VarChar(500)
+  startDate        DateTime? @db.Date
+  endDate          DateTime? @db.Date
+  isActive         Boolean   @default(true)
+  /// Randomized private object key; never derived from the original file name.
+  imageStorageKey  String    @unique @db.VarChar(255)
+  imageContentType String    @db.VarChar(100)
+  imageSizeBytes   Int
+  imageSha256      String    @db.Char(64)
+  originalFileName String    @db.VarChar(255)
+  createdByUserId  String    @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  /// Soft deletion keeps the record for audit purposes.
+  deletedAt        DateTime? @db.Timestamptz(3)
+
+  business      Business         @relation(fields: [businessId], references: [id])
+  createdBy     BusinessUser     @relation(fields: [createdByUserId, businessId], references: [id, businessId])
+  whatsAppSends AdWhatsAppSend[]
+
+  @@index([businessId, deletedAt])
+  @@map("advertisements")
+}
+
+/// Stores a business's WhatsApp Business Platform (Meta Cloud API) settings, entered by the Super Admin. The access
+/// token is stored encrypted (AES-256-GCM, key derived from SESSION_SECRET) and is never returned by the API.
+model BusinessWhatsAppSettings {
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  businessId           String   @unique @db.Uuid
+  /// Meta's "phone number ID" of the business's WhatsApp sender number (digits).
+  phoneNumberId        String   @db.VarChar(40)
+  /// Name of the Meta-approved marketing template (image header; body {{1}} guest name, {{2}} title, {{3}} details).
+  templateName         String   @db.VarChar(512)
+  /// Template language code, for example "en" or "en_US".
+  templateLanguage     String   @db.VarChar(15)
+  /// Encrypted access token: base64 of IV + auth tag + ciphertext.
+  accessTokenEncrypted String
+  /// Sending is possible only while enabled.
+  enabled              Boolean  @default(true)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@map("business_whatsapp_settings")
+}
+
+/// Running GRC numbers of a business per financial year (April to March), for numbers like "2026-2027/1" (owner decision
+/// 2026-11-12): one series for all locations of the business, starting again at 1 every April.
+model GrcSequence {
+  businessId    String   @db.Uuid
+  /// "2026-2027".
+  financialYear String   @db.Char(9)
+  nextValue     Int      @default(1)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@id([businessId, financialYear])
+  @@map("grc_sequences")
+}
+
+/// Stores one sending of an advertisement on WhatsApp to the guests who agreed to receive offers.
+model AdWhatsAppSend {
+  id              String               @id @default(uuid(7)) @db.Uuid
+  businessId      String               @db.Uuid
+  advertisementId String               @db.Uuid
+  sentByUserId    String               @db.Uuid
+  status          AdWhatsAppSendStatus @default(SENDING)
+  /// Guests with a usable number (one message per number).
+  totalCount      Int
+  sentCount       Int                  @default(0)
+  failedCount     Int                  @default(0)
+  /// Consenting guests left out because their phone number has no country code or is not valid.
+  skippedCount    Int                  @default(0)
+  /// Why the whole send failed (for example the image could not be uploaded); never contains the access token.
+  error           String?              @db.VarChar(300)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(3)
+  completedAt     DateTime?            @db.Timestamptz(3)
+
+  business      Business              @relation(fields: [businessId], references: [id])
+  advertisement Advertisement         @relation(fields: [advertisementId], references: [id])
+  sentBy        BusinessUser          @relation(fields: [sentByUserId, businessId], references: [id, businessId])
+  recipients    AdWhatsAppRecipient[]
+
+  @@index([businessId, status])
+  @@index([advertisementId, createdAt])
+  @@map("ad_whatsapp_sends")
+}
+
+/// Stores the outcome for one guest (one phone number) of a WhatsApp advertisement send.
+model AdWhatsAppRecipient {
+  id                String                    @id @default(uuid(7)) @db.Uuid
+  sendId            String                    @db.Uuid
+  businessId        String                    @db.Uuid
+  guestId           String                    @db.Uuid
+  /// International number, digits only, as sent.
+  phone             String                    @db.VarChar(20)
+  status            AdWhatsAppRecipientStatus @default(PENDING)
+  /// Meta's message ID when accepted.
+  providerMessageId String?                   @db.VarChar(128)
+  /// Why this message failed; never contains the access token.
+  error             String?                   @db.VarChar(300)
+  attemptedAt       DateTime?                 @db.Timestamptz(3)
+
+  send  AdWhatsAppSend @relation(fields: [sendId], references: [id])
+  guest Guest          @relation(fields: [guestId, businessId], references: [id, businessId])
+
+  @@unique([sendId, phone])
+  @@index([sendId, status])
+  @@map("ad_whatsapp_recipients")
+}
+
+/// Stores one staff member's salary settings; amounts for a period are always calculated on the server from attendance.
+model StaffSalary {
+  id                   String              @id @default(uuid(7)) @db.Uuid
+  businessId           String              @db.Uuid
+  userId               String              @db.Uuid
+  baseSalary           Decimal             @db.Decimal(12, 2)
+  expectedWorkingDays  Int
+  /// Absent days in a period that are not deducted.
+  paidLeaveDays        Int                 @default(0)
+  deductionMode        SalaryDeductionMode @default(PRO_RATA)
+  /// Amount per unpaid absent day; used only by FIXED_PER_DAY.
+  fixedDeductionPerDay Decimal?            @db.Decimal(12, 2)
+  /// Amount deducted per late arrival beyond the allowed number; empty = lateness does not affect salary.
+  lateDeductionPerDay  Decimal?            @db.Decimal(12, 2)
+  lateAllowedDays      Int                 @default(0)
+  /// "MONTHLY" (baseSalary is the month's salary) or "DAILY" (baseSalary is the pay per paid day).
+  salaryType           String              @default("MONTHLY") @db.VarChar(10)
+  /// Earlier fixed monthly amounts; no longer used since the percentages below (kept, never dropped).
+  da                   Decimal             @default(0) @db.Decimal(12, 2)
+  allowance            Decimal             @default(0) @db.Decimal(12, 2)
+  esi                  Decimal             @default(0) @db.Decimal(12, 2)
+  pf                   Decimal             @default(0) @db.Decimal(12, 2)
+  advance              Decimal             @default(0) @db.Decimal(12, 2)
+  /// Percentages of the basic salary (of the wages earned for daily wages), 0 to 100: DA and allowance are added;
+  /// ESI, PF, and the advance recovery are deducted.
+  daPercent            Decimal             @default(0) @db.Decimal(5, 2)
+  allowancePercent     Decimal             @default(0) @db.Decimal(5, 2)
+  esiPercent           Decimal             @default(0) @db.Decimal(5, 2)
+  pfPercent            Decimal             @default(0) @db.Decimal(5, 2)
+  advancePercent       Decimal             @default(0) @db.Decimal(5, 2)
+  updatedByUserId      String              @db.Uuid
+  createdAt            DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime            @updatedAt @db.Timestamptz(3)
+
+  user      BusinessUser @relation("SalaryOfStaff", fields: [userId, businessId], references: [id, businessId])
+  updatedBy BusinessUser @relation("SalaryUpdatedBy", fields: [updatedByUserId, businessId], references: [id, businessId])
+
+  @@unique([userId, businessId])
+  @@unique([userId])
+  @@index([businessId])
+  @@map("staff_salaries")
 }
 
 // ───────────────────────────── Audit ─────────────────────────────

@@ -2,6 +2,7 @@
 // breadcrumbs and the administrator's profile menu, and the page area. Navigation stays hidden until a temporary password is changed.
 'use client';
 
+import { InteractiveAfterHydration } from '@/components/layout/interactive-after-hydration';
 import { usePathname } from 'next/navigation';
 import { useCallback, useState, type ReactNode } from 'react';
 import { HeaderBar } from '@/components/layout/header-bar';
@@ -14,7 +15,7 @@ import { ConsoleSessionGate, useSuperAdminSession } from './super-admin-session'
 
 // Renders the console frame around a page.
 export function ConsoleShell({ children }: { children: ReactNode }) {
-  const { profile, logout } = useSuperAdminSession();
+  const { profile, logout, darkTheme, toggleTheme } = useSuperAdminSession();
   const pathname = usePathname();
   const sidebar = useAppSidebar('hms.console.sidebar.collapsed');
   const [loggingOut, setLoggingOut] = useState(false);
@@ -43,6 +44,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         productSubtitle="Platform administration"
         groups={groups}
         accountItems={ready ? [{ label: 'Change Password', href: CONSOLE_CHANGE_PASSWORD, icon: 'key', available: true, active: pathname === CONSOLE_CHANGE_PASSWORD }] : []}
+        themeToggle={profile && ready ? { dark: darkTheme, onToggle: toggleTheme } : undefined}
         showNav={ready}
         hint="Change your temporary password to open the console."
         user={{ initials: initials(name), name, subtitle: 'Super Admin' }}
@@ -76,7 +78,9 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         </HeaderBar>
         <main className="flex-1 p-2 sm:p-4">
           <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
-            <ConsoleSessionGate>{children}</ConsoleSessionGate>
+            <InteractiveAfterHydration>
+              <ConsoleSessionGate>{children}</ConsoleSessionGate>
+            </InteractiveAfterHydration>
           </div>
         </main>
       </div>

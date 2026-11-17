@@ -4,10 +4,12 @@
 // the first available ones of a type; extra beds; an agreed rate for roles allowed to change rates), and, when
 // creating, an optional advance actually received. The running estimate here is a preview only: the server prices the
 // booking from the database, rechecks availability, and refuses rooms that were taken in the meantime.
+// "Today" is the hotel's date (its own time zone), never the browser's. A new reservation can start from the Room
+// Availability page, which passes the stay, guests, and room in the address (?checkInDate=…&roomId=…).
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   BOOKING_SOURCE_LABELS,
@@ -30,7 +32,7 @@ import { ErrorState, LoadingState } from '@/components/ui/states';
 import { useBusinessSession } from '@/features/business/business-session';
 import { useApiQuery } from '@/hooks/use-api-query';
 import { apiRequest, errorMessages } from '@/lib/api-client';
-import { addDays, formatGuests, formatMoney, nightsBetween } from './reservation-format';
+import { addDays, formatGuests, formatMoney, hotelToday, nightsBetween } from './reservation-format';
 
 // One chosen room and its options.
 interface Choice {
@@ -42,23 +44,85 @@ interface Choice {
 // The guest picked or typed in.
 type GuestPick = { id: string; fullName: string; phone: string | null; email: string | null };
 
-// Today's date in the browser (the server checks against the hotel's own date).
-function localToday(): string {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+// Values a new reservation may start with (from the Room Availability, Calendar, or Room Reservation pages).
+interface Prefill {
+  checkInDate?: string;
+  checkOutDate?: string;
+  checkInTime?: string;
+  checkOutTime?: string;
+  adults?: number;
+  children?: number;
+  roomIds?: string[];
+  extraBeds?: number;
+}
+
+// "YYYY-MM-DD", "HH:mm", and UUID shapes for values read from the address.
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME = /^\d{2}:\d{2}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Reads the prefill from the address, ignoring anything malformed (the server validates everything again).
+function readPrefill(params: URLSearchParams): Prefill {
+  const text = (key: string, pattern: RegExp) => {
+    const value = params.get(key);
+    return value !== null && pattern.test(value) ? value : undefined;
+  };
+  const count = (key: string, min: number, max: number) => {
+    const raw = params.get(key);
+    const value = Number(raw);
+    return raw !== null && Number.isInteger(value) && value >= min && value <= max ? value : undefined;
+  };
+  return {
+    checkInDate: text('checkInDate', DATE),
+    checkOutDate: text('checkOutDate', DATE),
+    checkInTime: text('checkInTime', TIME),
+    checkOutTime: text('checkOutTime', TIME),
+    adults: count('adults', 1, RESERVATION_LIMITS.maxAdults),
+    children: count('children', 0, RESERVATION_LIMITS.maxChildren),
+    // One or more rooms (repeated roomId), at most the rooms one reservation may hold.
+    roomIds: [...new Set(params.getAll('roomId').filter((id) => UUID.test(id)))].slice(0, RESERVATION_LIMITS.maxRooms),
+    extraBeds: count('extraBeds', 0, 10),
+  };
 }
 
 // Money pattern, as on the server.
 const MONEY = /^\d{1,10}(\.\d{1,2})?$/;
 
-// Renders the whole form; `existing` switches it to editing a confirmed reservation.
+// Waits for the session (the hotel's time zone decides "today"), then renders the form; `existing` switches it to
+// editing a confirmed reservation.
 export function ReservationForm({ existing }: { existing?: ReservationDetail }) {
+  const { info } = useBusinessSession();
+  const searchParams = useSearchParams();
+  if (!info) return <LoadingState />;
+  const location = info.locations.find((l) => l.id === info.activeLocationId);
+  return (
+    <ReservationFormBody
+      existing={existing}
+      today={hotelToday(location?.timezone)}
+      standardTimes={{ checkIn: location?.standardCheckInTime ?? '', checkOut: location?.standardCheckOutTime ?? '' }}
+      prefill={existing ? {} : readPrefill(searchParams)}
+    />
+  );
+}
+
+// The form itself, with the hotel's "today", the property's standard times (the default expected arrival and departure),
+// and an optional prefill for new reservations.
+function ReservationFormBody({
+  existing,
+  today,
+  standardTimes,
+  prefill,
+}: {
+  existing?: ReservationDetail;
+  today: string;
+  standardTimes: { checkIn: string; checkOut: string };
+  prefill: Prefill;
+}) {
   const router = useRouter();
   const notify = useNotify();
   const { info, can } = useBusinessSession();
   const editing = Boolean(existing);
   const canOverride = existing ? existing.allowed.overrideRate : can('billing.rateOverride');
-  const today = localToday();
 
   // Guest.
   const [guestMode, setGuestMode] = useState<'existing' | 'new'>('existing');
@@ -66,19 +130,21 @@ export function ReservationForm({ existing }: { existing?: ReservationDetail }) 
   const [guestQuery, setGuestQuery] = useState('');
   const [newGuest, setNewGuest] = useState({ fullName: '', phone: '', email: '' });
   // Stay.
-  const [checkInDate, setCheckInDate] = useState(existing?.checkInDate ?? today);
-  const [checkOutDate, setCheckOutDate] = useState(existing?.checkOutDate ?? addDays(today, 1));
-  const [checkInTime, setCheckInTime] = useState(existing ? (existing.checkInTime ?? '') : '14:00');
-  const [checkOutTime, setCheckOutTime] = useState(existing ? (existing.checkOutTime ?? '') : '11:00');
-  const [adults, setAdults] = useState(existing?.adults ?? 1);
-  const [children, setChildren] = useState(existing?.children ?? 0);
+  const [checkInDate, setCheckInDate] = useState(existing?.checkInDate ?? prefill.checkInDate ?? today);
+  const [checkOutDate, setCheckOutDate] = useState(existing?.checkOutDate ?? prefill.checkOutDate ?? addDays(prefill.checkInDate ?? today, 1));
+  const [checkInTime, setCheckInTime] = useState(existing ? (existing.checkInTime ?? '') : (prefill.checkInTime ?? standardTimes.checkIn));
+  const [checkOutTime, setCheckOutTime] = useState(existing ? (existing.checkOutTime ?? '') : (prefill.checkOutTime ?? standardTimes.checkOut));
+  const [adults, setAdults] = useState(existing?.adults ?? prefill.adults ?? 1);
+  const [children, setChildren] = useState(existing?.children ?? prefill.children ?? 0);
   const [source, setSource] = useState<string>(existing?.source ?? '');
   const [notes, setNotes] = useState(existing?.notes ?? '');
   // Rooms.
   const [roomTypeId, setRoomTypeId] = useState('');
   const [roomsNeeded, setRoomsNeeded] = useState(1);
-  const [chosen, setChosen] = useState<Map<string, Choice>>(
-    () => new Map((existing?.rooms ?? []).map((r) => [r.roomId, { extraBeds: r.extraBeds, rate: r.nightlyRate, reason: r.rateOverrideReason ?? '' }])),
+  const [chosen, setChosen] = useState<Map<string, Choice>>(() =>
+    existing
+      ? new Map(existing.rooms.map((r) => [r.roomId, { extraBeds: r.extraBeds, rate: r.nightlyRate, reason: r.rateOverrideReason ?? '' }]))
+      : new Map((prefill.roomIds ?? []).map((id) => [id, { extraBeds: prefill.roomIds?.length === 1 ? (prefill.extraBeds ?? 0) : 0, rate: '', reason: '' }])),
   );
   // Advance (new reservations only).
   const [advanceAmount, setAdvanceAmount] = useState('');
@@ -99,6 +165,8 @@ export function ReservationForm({ existing }: { existing?: ReservationDetail }) 
   const availability = useApiQuery<RoomAvailability>(datesValid ? '/reservations/availability' : null, {
     checkInDate,
     checkOutDate,
+    checkInTime,
+    checkOutTime,
     excludeReservationId: existing?.id,
   });
 
@@ -112,13 +180,16 @@ export function ReservationForm({ existing }: { existing?: ReservationDetail }) 
     setErrors([]);
   }, [guestMode, guest, newGuest.fullName, checkInDate, checkOutDate, chosen]);
 
-  // Drops chosen rooms that no longer exist in the location (for example after archiving).
+  // Drops chosen rooms that no longer exist in the location (for example after archiving), and fills in the standard
+  // rate of a room chosen on the Room Availability page.
   useEffect(() => {
     if (!availability.data) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- keeps the selection consistent with the loaded rooms
     setChosen((current) => {
-      const next = new Map([...current].filter(([id]) => byId.has(id)));
-      return next.size === current.size ? current : next;
+      const kept = [...current].filter(([id]) => byId.has(id));
+      const missingRate = kept.some(([, choice]) => choice.rate === '');
+      if (kept.length === current.size && !missingRate) return current;
+      return new Map(kept.map(([id, choice]) => [id, choice.rate === '' ? { ...choice, rate: byId.get(id)!.standardRate } : choice]));
     });
   }, [availability.data, byId]);
 
@@ -473,6 +544,11 @@ export function ReservationForm({ existing }: { existing?: ReservationDetail }) 
                             ) : (
                               <span className={choice ? 'font-semibold text-red-600' : 'text-slate-500'}>{room.reason}</span>
                             )}
+                            {room.notices.map((notice) => (
+                              <div key={notice} className="text-xs font-normal text-slate-500">
+                                {notice}
+                              </div>
+                            ))}
                           </td>
                         </tr>
                       );

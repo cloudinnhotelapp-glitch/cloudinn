@@ -53,17 +53,27 @@ export function displayFileName(original: string): string {
   return `${name.slice(0, 120 - extension.length)}${extension}`;
 }
 
+// What an upload may be: the allowed kinds, the size limit, and the message for anything else.
+export interface UploadPolicy {
+  allowed: readonly GuestDocumentContentType[];
+  maxBytes: number;
+  unsupported: string;
+}
+
+// Guest ID files: JPG, PNG, or PDF.
+const DOCUMENT_POLICY: UploadPolicy = { allowed: ['image/jpeg', 'image/png', 'application/pdf'], maxBytes: GUEST_DOCUMENT_MAX_BYTES, unsupported: UNSUPPORTED_FILE };
+
 // Checks one uploaded file and returns its verified content type (throws a readable 400/413 error otherwise).
-export function verifyUploadedFile(file: UploadedFileInput | undefined): GuestDocumentContentType {
+export function verifyUploadedFile(file: UploadedFileInput | undefined, policy: UploadPolicy = DOCUMENT_POLICY): GuestDocumentContentType {
   if (!file || !Buffer.isBuffer(file.buffer)) throw new BadRequestException(['Choose a file to upload.']);
   if (file.buffer.length === 0) throw new BadRequestException(['The file is empty.']);
-  if (file.buffer.length > GUEST_DOCUMENT_MAX_BYTES) throw new PayloadTooLargeException('The file is larger than 5 MB.');
+  if (file.buffer.length > policy.maxBytes) throw new PayloadTooLargeException('The file is larger than 5 MB.');
 
   const detected = detectContentType(file.buffer);
-  if (!detected) throw new BadRequestException([UNSUPPORTED_FILE]);
+  if (!detected || !policy.allowed.includes(detected)) throw new BadRequestException([policy.unsupported]);
   const name = file.originalname.toLowerCase();
   const extension = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '';
-  if (!Object.values(EXTENSIONS).some((list) => list.includes(extension))) throw new BadRequestException([UNSUPPORTED_FILE]);
+  if (!Object.values(EXTENSIONS).some((list) => list.includes(extension))) throw new BadRequestException([policy.unsupported]);
   if (!EXTENSIONS[detected].includes(extension) || !BROWSER_TYPES[detected].includes(file.mimetype.toLowerCase())) {
     throw new BadRequestException(['The file’s content does not match its name or type. Upload the original JPG, PNG, or PDF file.']);
   }

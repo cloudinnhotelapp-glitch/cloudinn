@@ -77,6 +77,28 @@ export function LocationDetailView() {
             <dd className="ui-detail-value tabular-nums">{location.taxRatePercent}%</dd>
           </div>
           <div>
+            <dt className="ui-detail-label">Standard check-in / check-out</dt>
+            <dd className="ui-detail-value tabular-nums">
+              {location.standardCheckInTime} / {location.standardCheckOutTime}
+            </dd>
+          </div>
+          <div>
+            <dt className="ui-detail-label">Uploaded ID before check-in</dt>
+            <dd className="ui-detail-value">{location.requireIdDocumentUpload ? 'Required' : 'Not required'}</dd>
+          </div>
+          <div>
+            <dt className="ui-detail-label">Guest feedback link</dt>
+            <dd className="ui-detail-value break-all">{location.guestFeedbackUrl ?? 'Not set'}</dd>
+          </div>
+          <div>
+            <dt className="ui-detail-label">Attendance</dt>
+            <dd className="ui-detail-value">{location.attendanceEnabled ? 'Enabled' : 'Turned off'}{location.attendanceShiftStart ? ` · shift ${location.attendanceShiftStart}, grace ${location.attendanceLateGraceMinutes} min` : ''}{location.attendanceCheckInFrom ? ` · punch-in ${location.attendanceCheckInFrom}–${location.attendanceCheckInUntil}` : ''} · photos {location.attendancePhotoRetentionDays ? `kept ${location.attendancePhotoRetentionDays} days` : 'kept'}</dd>
+          </div>
+          <div>
+            <dt className="ui-detail-label">Attendance area</dt>
+            <dd className="ui-detail-value tabular-nums">{location.attendanceRadiusMeters === null ? 'Not set' : `${location.attendanceLatitude}, ${location.attendanceLongitude} · ${location.attendanceRadiusMeters} m`}</dd>
+          </div>
+          <div>
             <dt className="ui-detail-label">Address</dt>
             <dd className="ui-detail-value">{location.address ?? '—'}</dd>
           </div>

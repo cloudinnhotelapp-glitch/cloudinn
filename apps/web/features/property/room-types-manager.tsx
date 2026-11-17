@@ -8,7 +8,7 @@ import { Icon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DeleteRecordDialog, type DeleteTarget } from '@/components/ui/delete-record';
-import { RowActions } from '@/components/ui/row-actions';
+import { RowActions, RowEditButton, type RowAction } from '@/components/ui/row-actions';
 import { Field, inputClass } from '@/components/ui/fields';
 import { useNotify } from '@/components/ui/notifications';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -45,7 +45,7 @@ function toForm(type: RoomTypeDetail | null): RoomTypeForm {
 }
 
 // Loads the room types and renders the table plus the add/edit and status dialogs.
-export function RoomTypesManager({ apiBase, canManage }: PropertyManagerProps) {
+export function RoomTypesManager({ apiBase, canManage, canDelete = canManage, editButton = false }: PropertyManagerProps) {
   const notify = useNotify();
   const { data, error, loading, reload } = useApiQuery<RoomTypeDetail[]>(`${apiBase}/room-types`);
   const filters = useListFilter(data, roomTypeText);
@@ -141,36 +141,51 @@ export function RoomTypesManager({ apiBase, canManage }: PropertyManagerProps) {
                   </td>
                   {canManage && (
                     <td className="text-right">
-                      <RowActions
-                        label={`Actions for room type ${type.name}`}
-                        actions={[
-                          {
-                            label: 'Edit room type',
-                            icon: 'edit',
-                            tone: 'emerald',
-                            onSelect: () => {
-                              setForm(toForm(type));
-                              setEditing({ type });
-                            },
-                          },
-                          type.isActive
-                            ? { label: 'Deactivate room type', icon: 'toggleOff', tone: 'amber', onSelect: () => setToggling(type) }
-                            : { label: 'Activate room type', icon: 'toggleOn', tone: 'emerald', onSelect: () => setToggling(type) },
-                          {
-                            label: 'Delete room type',
-                            icon: 'trash',
-                            tone: 'red',
-                            onSelect: () =>
-                              setDeleting({
-                                kind: 'room type',
-                                name: type.name,
-                                details: [`Capacity ${type.defaultCapacity} · rate ${type.defaultStandardRate}`, `${type.roomCount} room${type.roomCount === 1 ? '' : 's'}`, type.isActive ? 'Active' : 'Inactive'],
-                                checkPath: `${apiBase}/room-types/${type.id}/deletion-check`,
-                                deletePath: `${apiBase}/room-types/${type.id}`,
-                              }),
-                          },
-                        ]}
-                      />
+                      <div className="inline-flex items-center gap-1.5">
+                        {editButton && <RowEditButton label={`Edit room type ${type.name}`} onClick={() => {
+                            setForm(toForm(type));
+                            setEditing({ type });
+                          }} />}
+                        <RowActions
+                          label={`Actions for room type ${type.name}`}
+                          actions={[
+                            // Shown as its own pencil button on the business Property Setup page.
+                            ...(editButton
+                              ? []
+                              : ([
+                                  {
+                                    label: 'Edit room type',
+                                    icon: 'edit',
+                                    tone: 'emerald',
+                                    onSelect: () => {
+                                      setForm(toForm(type));
+                                      setEditing({ type });
+                                    },
+                                  },
+                                ] satisfies RowAction[])),
+                            type.isActive
+                              ? { label: 'Deactivate room type', icon: 'toggleOff', tone: 'amber', onSelect: () => setToggling(type) }
+                              : { label: 'Activate room type', icon: 'toggleOn', tone: 'emerald', onSelect: () => setToggling(type) },
+                            ...(canDelete
+                              ? ([
+                                {
+                                  label: 'Delete room type',
+                                  icon: 'trash',
+                                  tone: 'red',
+                                  onSelect: () =>
+                                    setDeleting({
+                                      kind: 'room type',
+                                      name: type.name,
+                                      details: [`Capacity ${type.defaultCapacity} · rate ${type.defaultStandardRate}`, `${type.roomCount} room${type.roomCount === 1 ? '' : 's'}`, type.isActive ? 'Active' : 'Inactive'],
+                                      checkPath: `${apiBase}/room-types/${type.id}/deletion-check`,
+                                      deletePath: `${apiBase}/room-types/${type.id}`,
+                                    }),
+                                },
+                                ] satisfies RowAction[])
+                              : []),
+                          ]}
+                        />
+                        </div>
                     </td>
                   )}
                 </tr>
@@ -220,7 +235,7 @@ export function RoomTypesManager({ apiBase, canManage }: PropertyManagerProps) {
           reload();
         }}
       />
-      {canManage && <DeleteRecordDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={reload} />}
+      {canDelete && <DeleteRecordDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={reload} />}
     </section>
   );
 }

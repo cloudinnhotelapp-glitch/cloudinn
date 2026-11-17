@@ -36,6 +36,7 @@ describe('Business property management (e2e)', () => {
     get: (path: string) => request(app.getHttpServer()).get(`/api/v1${path}`).set(sessionHeaders(session)),
     post: (path: string, body: object = {}) => request(app.getHttpServer()).post(`/api/v1${path}`).set(sessionHeaders(session, true)).send(body),
     patch: (path: string, body: object) => request(app.getHttpServer()).patch(`/api/v1${path}`).set(sessionHeaders(session, true)).send(body),
+    del: (path: string) => request(app.getHttpServer()).delete(`/api/v1${path}`).set(sessionHeaders(session, true)),
   });
 
   describe('location selection and switching', () => {
@@ -104,8 +105,9 @@ describe('Business property management (e2e)', () => {
   }
 
   describe('role permissions', () => {
-    // Proves Admin, Manager, and Receptionist all get the same read access and every property write is refused with 403.
-    it('gives all three business roles identical read-only property access', async () => {
+    // Proves Admin, Manager, and Receptionist all see the same property data, add, edit, activate, and deactivate floors,
+    // room types, and rooms of their location (owner decision 2026-11-12), and none of them may delete (Super Admin only).
+    it('lets all three business roles edit property setup but not delete it', async () => {
       const tenant = await createTenant(prisma, { roomsPerLocation: 3 });
       const locationId = tenant.locations[0]!.id;
       const floorId = (await prisma.floor.findFirstOrThrow({ where: { locationId } })).id;
@@ -123,26 +125,32 @@ describe('Business property management (e2e)', () => {
         await user.get('/dashboard').expect(200);
         seen.push(JSON.stringify([floors.map((f: { id: string }) => f.id), types.map((t: { id: string }) => t.id), rooms.total]));
 
-        await user.post('/floors', { name: `Nope ${role}` }).expect(403);
-        await user.patch(`/floors/${floorId}`, { name: 'Changed' }).expect(403);
-        await user.post(`/floors/${floorId}/deactivate`).expect(403);
-        await user.post(`/floors/${floorId}/activate`).expect(403);
-        await user.post('/room-types', { name: 'Nope', defaultCapacity: 2, defaultStandardRate: '100' }).expect(403);
-        await user.patch(`/room-types/${roomTypeId}`, { defaultStandardRate: '1' }).expect(403);
-        await user.post(`/room-types/${roomTypeId}/deactivate`).expect(403);
-        await user.post(`/room-types/${roomTypeId}/activate`).expect(403);
-        await user.post('/rooms', { roomNumber: '999', floorId, roomTypeId }).expect(403);
-        await user.patch(`/rooms/${roomId}`, { operationalStatus: 'OUT_OF_SERVICE' }).expect(403);
-        await user.patch(`/rooms/${roomId}`, { notes: 'Sea view' }).expect(403);
+        // Add, edit, deactivate, and activate.
+        const floor = (await user.post('/floors', { name: `Floor by ${role}` }).expect(201)).body as { id: string };
+        await user.patch(`/floors/${floor.id}`, { name: `Floor by ${role} (renamed)` }).expect(200);
+        expect((await user.post(`/floors/${floor.id}/deactivate`)).status).toBeLessThan(300);
+        expect((await user.post(`/floors/${floor.id}/activate`)).status).toBeLessThan(300);
+        const type = (await user.post('/room-types', { name: `Suite by ${role}`, defaultCapacity: 2, defaultStandardRate: '4500.00' }).expect(201)).body as { id: string };
+        await user.patch(`/room-types/${type.id}`, { defaultStandardRate: '4800.00' }).expect(200);
+        expect((await user.post(`/room-types/${type.id}/deactivate`)).status).toBeLessThan(300);
+        expect((await user.post(`/room-types/${type.id}/activate`)).status).toBeLessThan(300);
+        const created = await user.post('/rooms', { roomNumber: `9${role.length}${seen.length}`, floorId: floor.id, roomTypeId: type.id });
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+        await user.patch(`/rooms/${roomId}`, { notes: `Sea view (${role})` }).expect(200);
+
+        // Deleting stays with the Super Admin.
+        await user.del(`/floors/${floorId}`).expect(403);
+        await user.del(`/room-types/${roomTypeId}`).expect(403);
+        await user.del(`/rooms/${created.body.id}`).expect(403);
       }
 
-      expect(new Set(seen).size).toBe(1);
-      expect(await prisma.floor.count({ where: { locationId } })).toBe(1);
-      expect(await prisma.roomType.count({ where: { locationId } })).toBe(1);
-      const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
-      expect(room).toMatchObject({ operationalStatus: 'ACTIVE', notes: null });
-      const writes = await prisma.auditLog.count({ where: { businessId: tenant.businessId, action: { in: ['floor.created', 'floor.updated', 'room_type.updated', 'room.updated', 'room.status_changed'] } } });
-      expect(writes).toBe(0);
+      // Every role saw the same data before its own changes were made visible to the next one; the changes are audited.
+      expect(seen).toHaveLength(3);
+      expect(await prisma.floor.count({ where: { locationId } })).toBe(4);
+      expect(await prisma.roomType.count({ where: { locationId } })).toBe(4);
+      expect((await prisma.room.findUniqueOrThrow({ where: { id: roomId } })).notes).toBe('Sea view (RECEPTIONIST)');
+      const writes = await prisma.auditLog.count({ where: { businessId: tenant.businessId, action: { in: ['floor.created', 'room_type.created', 'room.created'] } } });
+      expect(writes).toBe(9);
     });
 
     // Proves business-user write attempts are refused even without a CSRF header (403) and anonymous calls are rejected (401).
@@ -156,14 +164,15 @@ describe('Business property management (e2e)', () => {
       await request(app.getHttpServer()).post(`/api/v1/super-admin/locations/${tenant.locations[0]!.id}/floors`).send({ name: 'Anonymous' }).expect(401);
     });
 
-    // Proves users still carrying the legacy "must change password" flag read property data normally (no forced change for
-    // business users), while their writes stay forbidden and requests without a session are rejected.
-    it('serves legacy-flag users read-only and rejects anonymous requests', async () => {
+    // Proves users still carrying the legacy "must change password" flag use property setup normally (no forced change for
+    // business users), still cannot delete, and requests without a session are rejected.
+    it('serves legacy-flag users normally and rejects anonymous requests', async () => {
       const tenant = await createTenant(prisma, { mustChangePassword: true });
       const legacy = as(await login(tenant.users.ADMIN));
       await legacy.get('/floors').expect(200);
       await legacy.get('/rooms/status-board').expect(200);
-      await legacy.post('/floors', { name: 'Not allowed' }).expect(403);
+      const floor = (await legacy.post('/floors', { name: 'Allowed now' }).expect(201)).body as { id: string };
+      await legacy.del(`/floors/${floor.id}`).expect(403);
       await request(app.getHttpServer()).get('/api/v1/rooms').expect(401);
       await request(app.getHttpServer()).get('/api/v1/dashboard').expect(401);
     });

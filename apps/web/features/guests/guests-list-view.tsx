@@ -1,10 +1,10 @@
 // Guests page of the business app (/guests): search by name, email, phone, or ID number; filter by ID type; sort; page
-// through the list; add a guest in a popup; and open or edit a guest from the row menu. Guests belong to the business,
+// through the list; and open or edit a guest from the row menu. There is no Add button here (owner decision): new guests
+// are added where they arrive (walk-in and reservation check-in, the reservation form). Guests belong to the business,
 // so every location of the business sees the same list. ID numbers are masked here (the full number is on the guest page).
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { GUEST_DOCUMENT_TYPE_LABELS, GUEST_DOCUMENT_TYPES, type GuestDetail, type GuestSummary, type Paginated } from '@hms/shared';
 import { Button } from '@/components/ui/button';
@@ -22,7 +22,6 @@ import { GuestFormDialog } from './guest-form-dialog';
 
 // Loads one page of guests with the chosen filters and renders the toolbar, table, and popups.
 export function GuestsListView() {
-  const router = useRouter();
   const notify = useNotify();
   const { info, can } = useBusinessSession();
   const [searchInput, setSearchInput] = useState('');
@@ -31,7 +30,6 @@ export function GuestsListView() {
   const [sort, setSort] = useState('newest');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(20);
-  const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<GuestDetail | null>(null);
   const allowed = can('guests.manage');
   const guests = useApiQuery<Paginated<GuestSummary>>(allowed ? '/guests' : null, { search, idDocumentType: idType, sort, page, pageSize });
@@ -64,10 +62,6 @@ export function GuestsListView() {
           <h1 className="ui-page-title">Guests</h1>
           <p className="text-sm text-slate-500">Guest profiles for every location of your business.</p>
         </div>
-        <Button onClick={() => setAdding(true)}>
-          <Icon name="plus" className="h-5 w-5" />
-          Add guest
-        </Button>
       </div>
 
       <div className="ui-list-panel">
@@ -186,18 +180,6 @@ export function GuestsListView() {
         )}
       </div>
 
-      <GuestFormDialog
-        open={adding}
-        canEditNotes={can('guests.notes.view')}
-        canUpload={can('guestDocuments.manage')}
-        onClose={() => setAdding(false)}
-        onSaved={(guest, failedUploads) => {
-          setAdding(false);
-          notify(`Guest ${guest.fullName} added.`);
-          if (failedUploads.length > 0) notify(failedUploads.join(' '), 'warning');
-          router.push(`/guests/${guest.id}`);
-        }}
-      />
       <GuestFormDialog
         open={editing !== null}
         guest={editing}

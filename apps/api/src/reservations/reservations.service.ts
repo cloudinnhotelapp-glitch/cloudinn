@@ -13,7 +13,7 @@ import {
   hasPermission,
   RESERVATION_STATUS_LABELS,
   type BookingSource,
-  type BusinessRole,
+  type AccountRole,
   type Paginated,
   type Permission,
   type ReservationDetail,
@@ -24,7 +24,10 @@ import {
 } from '@hms/shared';
 import { Prisma } from '../generated/prisma/client.js';
 import { AuditLogService } from '../audit-logs/audit-log.service.js';
-import { isReservationOverlapError } from '../common/database/prisma-errors.js';
+import { RoomAvailabilityService, BOOKABLE_ROOM_SELECT, type BookableRoom, type BookingWindow } from '../availability/room-availability.service.js';
+import { isConcurrencyConflict, isReservationOverlapError } from '../common/database/prisma-errors.js';
+import { assertNotRepeatedPayment, lockReservation } from '../billing/payment-guards.js';
+import { nextSequenceValue } from '../common/database/number-sequence.js';
 import { pageArgs, toPage } from '../common/http/pagination.js';
 import { dateOnly, formatDateOnly, todayInTimeZone } from '../common/time/location-date.js';
 import type { AuditActor } from '../common/tenancy/property-scope.js';
@@ -33,6 +36,8 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import type {
   AvailabilityQueryDto,
   CancelReservationDto,
+  ReassignRoomDto,
+  ReleaseRoomDto,
   CreateReservationDto,
   ListReservationsQueryDto,
   NoShowDto,
@@ -40,36 +45,38 @@ import type {
   ReservationRoomInputDto,
   UpdateReservationDto,
 } from './dto/reservation.dto.js';
-import { assertStayDates, canTransition, estimate, formatReservationNumber, formatTime, nightsBetween, roomAmount, timeValue } from './reservation-rules.js';
+import { assertStayDates, billableRooms, canTransition, estimate, formatReservationNumber, formatTime, nightsBetween, roomAmount, timeValue } from './reservation-rules.js';
 
 // Who is asking: business, active location, and role, all from the session.
 export interface ReservationAccess {
   businessId: string;
   locationId: string;
-  role: BusinessRole;
+  role: AccountRole;
 }
 
-// Room-holding states (the exclusion constraint applies to these).
-const HOLDING: ('RESERVED' | 'CHECKED_IN')[] = ['RESERVED', 'CHECKED_IN'];
-
-// Room details loaded with booked rooms and availability.
-const ROOM_SELECT = {
-  id: true,
-  roomNumber: true,
-  capacity: true,
-  maxExtraBeds: true,
-  standardRate: true,
-  extraBedRate: true,
-  operationalStatus: true,
-  floor: { select: { name: true, isActive: true, sortOrder: true } },
-  roomType: { select: { id: true, name: true, isActive: true } },
-} as const;
+// Room details loaded with booked rooms (the same selection the availability service uses).
+const ROOM_SELECT = BOOKABLE_ROOM_SELECT;
 
 // Everything the detail view needs.
 const DETAIL_INCLUDE = {
   guest: { select: { id: true, fullName: true, phone: true, email: true } },
   location: { select: { id: true, name: true, code: true, timezone: true, currencyCode: true, taxRatePercent: true } },
-  rooms: { include: { room: { select: ROOM_SELECT } }, orderBy: { room: { roomNumber: 'asc' } } },
+  rooms: {
+    include: {
+      room: { select: ROOM_SELECT },
+      stay: {
+        select: {
+          id: true,
+          status: true,
+          checkedInAt: true,
+          checkedOutAt: true,
+          registrationCard: { select: { grcNumber: true } },
+          bill: { select: { id: true, billNumber: true, grandTotal: true, balanceDue: true } },
+        },
+      },
+    },
+    orderBy: { room: { roomNumber: 'asc' } },
+  },
   payments: { include: { recordedBy: { select: { id: true, name: true } } }, orderBy: { receivedAt: 'asc' } },
   createdBy: { select: { id: true, name: true } },
   cancelledBy: { select: { id: true, name: true } },
@@ -79,16 +86,26 @@ const DETAIL_INCLUDE = {
 const LIST_INCLUDE = {
   guest: { select: { id: true, fullName: true, phone: true } },
   location: { select: { currencyCode: true, taxRatePercent: true } },
-  rooms: { select: { nightlyRate: true, extraBedRate: true, extraBeds: true, room: { select: { roomNumber: true, roomType: { select: { name: true } } } } }, orderBy: { room: { roomNumber: 'asc' } } },
+  rooms: { select: { status: true, nightlyRate: true, extraBedRate: true, extraBeds: true, room: { select: { roomNumber: true, roomType: { select: { name: true } } } } }, orderBy: { room: { roomNumber: 'asc' } } },
   payments: { select: { entryType: true, amount: true } },
 } satisfies Prisma.ReservationInclude;
 
 type DetailRow = Prisma.ReservationGetPayload<{ include: typeof DETAIL_INCLUDE }>;
 type ListRow = Prisma.ReservationGetPayload<{ include: typeof LIST_INCLUDE }>;
-type RoomRow = Prisma.RoomGetPayload<{ select: typeof ROOM_SELECT }>;
+type RoomRow = BookableRoom;
 
 // Message when the database rejects a booking because a room was taken at the same moment.
 const TAKEN = 'One of the chosen rooms was just booked for these dates by someone else. Check availability and choose again.';
+
+// Message when two changes to the same rooms collided and PostgreSQL stopped one of them.
+const RETRY = 'Someone else changed these rooms at the same moment. Check availability and try again.';
+
+// Turns database conflict errors from a booking transaction into clear 409 answers; anything else is rethrown.
+export function asConflict(error: unknown): never {
+  if (isReservationOverlapError(error)) throw new ConflictException(TAKEN);
+  if (isConcurrencyConflict(error)) throw new ConflictException(RETRY);
+  throw error;
+}
 
 // Service holding the reservation rules for business users.
 @Injectable()
@@ -97,6 +114,7 @@ export class ReservationsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditLogService,
     private readonly guests: GuestsService,
+    private readonly rooms: RoomAvailabilityService,
   ) {}
 
   // Lists reservations of the active location with search, filters, sorting, and pagination.
@@ -106,6 +124,13 @@ export class ReservationsService {
       businessId: access.businessId,
       locationId: access.locationId,
       ...(query.status ? { status: query.status } : {}),
+      // Booked reservations, or walk-in check-ins (owner request 2026-11-12: each has its own page). A reservation with no
+      // source recorded counts as booked (a plain "not walk-in" would also drop those, because SQL compares NULL as unknown).
+      ...(query.kind === 'WALK_IN'
+        ? { source: 'WALK_IN' }
+        : query.kind === 'BOOKED'
+          ? { AND: [{ OR: [{ source: null }, { source: { not: 'WALK_IN' } }] }] }
+          : {}),
       ...(query.from ? { checkOutDate: { gt: dateOnly(query.from) } } : {}),
       ...(query.to ? { checkInDate: { lte: dateOnly(query.to) } } : {}),
       ...(query.roomTypeId ? { rooms: { some: { room: { roomTypeId: query.roomTypeId } } } } : {}),
@@ -140,40 +165,10 @@ export class ReservationsService {
     return toDetail(row, access, history);
   }
 
-  // Lists the location's rooms for a date range, saying which can be booked and why the others cannot.
-  async availability(access: ReservationAccess, query: AvailabilityQueryDto): Promise<RoomAvailability> {
-    const location = await this.location(access);
-    const nights = nightsBetween(query.checkInDate, query.checkOutDate);
-    if (nights < 1) throw new BadRequestException(['The check-out date must be after the check-in date.']);
-    const rooms = await this.prisma.room.findMany({
-      where: { businessId: access.businessId, locationId: access.locationId, archivedAt: null, ...(query.roomTypeId ? { roomTypeId: query.roomTypeId } : {}) },
-      select: ROOM_SELECT,
-      orderBy: [{ floor: { sortOrder: 'asc' } }, { roomNumber: 'asc' }],
-    });
-    const conflicts = await this.conflicts(this.prisma, access, rooms.map((room) => room.id), query.checkInDate, query.checkOutDate, query.excludeReservationId);
-    return {
-      checkInDate: query.checkInDate,
-      checkOutDate: query.checkOutDate,
-      nights,
-      currencyCode: location.currencyCode,
-      taxRatePercent: location.taxRatePercent.toFixed(2),
-      rooms: rooms.map((room) => {
-        const reason = unbookableReason(room) ?? (conflicts.has(room.id) ? `Booked (${conflicts.get(room.id)})` : null);
-        return {
-          id: room.id,
-          roomNumber: room.roomNumber,
-          floorName: room.floor.name,
-          roomTypeId: room.roomType.id,
-          roomTypeName: room.roomType.name,
-          capacity: room.capacity,
-          maxExtraBeds: room.maxExtraBeds,
-          standardRate: room.standardRate.toFixed(2),
-          extraBedRate: room.extraBedRate.toFixed(2),
-          available: reason === null,
-          reason,
-        };
-      }),
-    };
+  // Lists the active location's rooms for a date range, saying which can be booked and why the others cannot (the
+  // central availability service decides; this route is kept for the reservation form).
+  availability(access: ReservationAccess, query: AvailabilityQueryDto): Promise<RoomAvailability> {
+    return this.rooms.search(scopeOf(access), query);
   }
 
   // Creates a reservation (and, when asked, the guest and an advance payment) in one transaction.
@@ -184,7 +179,8 @@ export class ReservationsService {
       assertPositive(dto.advance.amount, 'The advance amount must be more than 0. Leave the advance out when nothing was received.');
     }
     const location = await this.location(access);
-    const nights = assertStayDates(dto.checkInDate, dto.checkOutDate, todayInTimeZone(location.timezone));
+    const today = todayInTimeZone(location.timezone);
+    const nights = assertStayDates(dto.checkInDate, dto.checkOutDate, today);
 
     let id: string;
     try {
@@ -192,10 +188,10 @@ export class ReservationsService {
         const guestId = dto.guestId
           ? await assertGuest(tx, access, dto.guestId)
           : (await this.guests.createWithin(tx, { ...scopeOf(access), canSeeNotes: hasPermission(access.role, 'guests.notes.view') }, dto.guest!, actor)).id;
-        const rooms = await this.bookableRooms(tx, access, dto.rooms, dto.checkInDate, dto.checkOutDate);
+        const rooms = await this.rooms.assertBookable(tx, scopeOf(access), windowOf(dto), dto.rooms, today);
         assertOccupancy(dto.adults, dto.children ?? 0, dto.rooms, rooms);
         const priced = dto.rooms.map((input) => ({ input, ...priceRoom(access, input, rooms.get(input.roomId)!) }));
-        const reservationNumber = formatReservationNumber(location.code, await nextNumber(tx, access));
+        const reservationNumber = formatReservationNumber(location.code, await nextSequenceValue(tx, scopeOf(access), 'RESERVATION'));
 
         const reservation = await tx.reservation.create({
           data: {
@@ -255,8 +251,7 @@ export class ReservationsService {
         return reservation.id;
       });
     } catch (error) {
-      if (isReservationOverlapError(error)) throw new ConflictException(TAKEN);
-      throw error;
+      asConflict(error);
     }
     return this.get(access, id);
   }
@@ -270,13 +265,14 @@ export class ReservationsService {
     if (!existing) throw new NotFoundException('Reservation not found.');
     if (existing.status !== 'CONFIRMED') throw new ConflictException(`A ${RESERVATION_STATUS_LABELS[existing.status].toLowerCase()} reservation cannot be edited.`);
     const before = { checkInDate: formatDateOnly(existing.checkInDate), checkOutDate: formatDateOnly(existing.checkOutDate) };
-    assertStayDates(dto.checkInDate, dto.checkOutDate, todayInTimeZone(existing.location.timezone), dto.checkInDate === before.checkInDate);
+    const today = todayInTimeZone(existing.location.timezone);
+    assertStayDates(dto.checkInDate, dto.checkOutDate, today, dto.checkInDate === before.checkInDate);
     if (new Set(dto.rooms.map((r) => r.roomId)).size !== dto.rooms.length) throw new BadRequestException(['Each room can be chosen only once.']);
 
     try {
       await this.prisma.$transaction(async (tx) => {
         const guestId = dto.guestId && dto.guestId !== existing.guestId ? await assertGuest(tx, access, dto.guestId) : existing.guestId;
-        const rooms = await this.bookableRooms(tx, access, dto.rooms, dto.checkInDate, dto.checkOutDate, id);
+        const rooms = await this.rooms.assertBookable(tx, scopeOf(access), { ...windowOf(dto), excludeReservationId: id }, dto.rooms, today);
         assertOccupancy(dto.adults, dto.children ?? 0, dto.rooms, rooms);
 
         const current = new Map(existing.rooms.map((row) => [row.roomId, row]));
@@ -387,9 +383,102 @@ export class ReservationsService {
         return all;
       });
     } catch (error) {
-      if (isReservationOverlapError(error)) throw new ConflictException(TAKEN);
-      throw error;
+      asConflict(error);
     }
+    return this.get(access, id);
+  }
+
+  // Moves one room of a confirmed reservation to another room for the same dates, after rechecking that the new room is
+  // free (other bookings, same-day times, current occupant) and that the rooms still sleep everyone. The new room gets
+  // its own standard rate unless a different rate is agreed (with "billing.rateOverride" and a reason). Audited.
+  async reassignRoom(access: ReservationAccess, id: string, reservationRoomId: string, dto: ReassignRoomDto, actor: AuditActor): Promise<ReservationDetail> {
+    const existing = await this.prisma.reservation.findFirst({
+      where: { id, businessId: access.businessId, locationId: access.locationId },
+      include: { rooms: { include: { room: { select: { roomNumber: true } } } }, location: { select: { timezone: true } } },
+    });
+    if (!existing) throw new NotFoundException('Reservation not found.');
+    if (existing.status !== 'CONFIRMED' && existing.status !== 'CHECKED_IN') {
+      throw new ConflictException(`A ${RESERVATION_STATUS_LABELS[existing.status].toLowerCase()} reservation cannot be changed.`);
+    }
+    const current = existing.rooms.find((row) => row.id === reservationRoomId);
+    if (!current) throw new NotFoundException('Room booking not found on this reservation.');
+    if (current.status !== 'RESERVED') throw new ConflictException('Only a room that is still waiting for check-in can be changed.');
+    if (current.roomId === dto.roomId) throw new BadRequestException(['Choose a different room.']);
+    if (existing.rooms.some((row) => row.roomId === dto.roomId)) throw new BadRequestException(['That room is already part of this reservation.']);
+    const extraBeds = dto.extraBeds ?? current.extraBeds;
+    const stay: BookingWindow = {
+      checkInDate: formatDateOnly(existing.checkInDate),
+      checkOutDate: formatDateOnly(existing.checkOutDate),
+      checkInTime: formatTime(existing.checkInTime),
+      checkOutTime: formatTime(existing.checkOutTime),
+      excludeReservationId: id,
+    };
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Locks the old room as well, so the move and any other booking of either room happen one after the other.
+        await this.rooms.lockRooms(tx, [current.roomId, dto.roomId]);
+        const rooms = await this.rooms.assertBookable(tx, scopeOf(access), stay, [{ roomId: dto.roomId, extraBeds }], todayInTimeZone(existing.location.timezone));
+        const target = rooms.get(dto.roomId)!;
+        // The remaining rooms plus the new one must still sleep everyone.
+        const others = await tx.reservationRoom.findMany({ where: { reservationId: id, id: { not: current.id }, status: { in: ['RESERVED', 'CHECKED_IN'] } }, select: { extraBeds: true, room: { select: { capacity: true } } } });
+        const sleeps = others.reduce((sum, row) => sum + row.room.capacity + row.extraBeds, target.capacity + extraBeds);
+        if (existing.adults + existing.children > sleeps) {
+          throw new BadRequestException([`The rooms would sleep at most ${sleeps} guest${sleeps === 1 ? '' : 's'} (including extra beds). Add extra beds or choose a larger room.`]);
+        }
+        const rate = priceRoom(access, { roomId: dto.roomId, extraBeds, nightlyRate: dto.nightlyRate, rateOverrideReason: dto.rateOverrideReason }, target);
+        // Updated in place: the exclusion constraint checks the new room, so a lost race still fails with 23P01.
+        const { count } = await tx.reservationRoom.updateMany({
+          where: { id: current.id, reservationId: id, status: 'RESERVED' },
+          data: { roomId: target.id, extraBeds, nightlyRate: rate.nightlyRate, extraBedRate: target.extraBedRate, rateOverridden: rate.rateOverridden, rateOverrideReason: rate.rateOverrideReason },
+        });
+        if (count === 0) throw new ConflictException('The reservation changed in the meantime. Reload it and try again.');
+        await this.audit.record(
+          {
+            ...actor,
+            ...scopeOf(access),
+            action: 'reservation.room_reassigned',
+            entityType: 'Reservation',
+            entityId: id,
+            metadata: { reservationNumber: existing.reservationNumber, from: current.room.roomNumber, to: target.roomNumber, rateOverridden: rate.rateOverridden },
+          },
+          tx,
+        );
+      });
+    } catch (error) {
+      asConflict(error);
+    }
+    return this.get(access, id);
+  }
+
+  // Releases a room of a partly checked-in reservation that will not be used (the guest's other rooms are in house), so
+  // the room is free again and the reservation can be completed. Needs "reservations.cancel" and a reason; audited.
+  async releaseRoom(access: ReservationAccess, id: string, reservationRoomId: string, dto: ReleaseRoomDto, actor: AuditActor): Promise<ReservationDetail> {
+    const existing = await this.prisma.reservation.findFirst({
+      where: { id, businessId: access.businessId, locationId: access.locationId },
+      include: { rooms: { include: { room: { select: { roomNumber: true } } } } },
+    });
+    if (!existing) throw new NotFoundException('Reservation not found.');
+    if (existing.status !== 'CHECKED_IN') throw new ConflictException('Rooms can be released only on a checked-in reservation. Edit or cancel a confirmed reservation instead.');
+    const target = existing.rooms.find((row) => row.id === reservationRoomId);
+    if (!target) throw new NotFoundException('Room booking not found on this reservation.');
+    await this.prisma.$transaction(async (tx) => {
+      await lockReservation(tx, id);
+      const { count } = await tx.reservationRoom.updateMany({ where: { id: reservationRoomId, reservationId: id, status: 'RESERVED' }, data: { status: 'CANCELLED' } });
+      if (count === 0) throw new ConflictException('Only a room that is still waiting for check-in can be released.');
+      await this.audit.record(
+        {
+          ...actor,
+          ...scopeOf(access),
+          action: 'reservation.room_released',
+          entityType: 'Reservation',
+          entityId: id,
+          metadata: { reservationNumber: existing.reservationNumber, room: target.room.roomNumber },
+        },
+        tx,
+      );
+      await closeReservationIfDone(tx, id);
+    });
     return this.get(access, id);
   }
 
@@ -438,12 +527,17 @@ export class ReservationsService {
       throw new ConflictException(`Payments cannot be recorded on a ${RESERVATION_STATUS_LABELS[existing.status].toLowerCase()} reservation.`);
     }
     const location = await this.location(access);
-    await this.prisma.$transaction((tx) => this.recordPaymentWithin(tx, access, id, existing.reservationNumber, location.currencyCode, dto, actor));
+    await this.prisma.$transaction(async (tx) => {
+      await lockReservation(tx, id);
+      await assertNotRepeatedPayment(tx, id, dto, actor.businessUserId!);
+      await this.recordPaymentWithin(tx, access, id, existing.reservationNumber, location.currencyCode, dto, actor);
+    });
     return this.get(access, id);
   }
 
-  // Writes one advance payment and its audit entry inside the caller's transaction.
-  private async recordPaymentWithin(
+  // Writes one payment received before checkout (an advance) and its audit entry inside the caller's transaction. Also
+  // used by check-in (Phase 6.5), which marks the entry as received at check-in in the audit metadata.
+  async recordPaymentWithin(
     tx: Prisma.TransactionClient,
     access: ReservationAccess,
     reservationId: string,
@@ -451,6 +545,7 @@ export class ReservationsService {
     currencyCode: string,
     dto: RecordPaymentDto,
     actor: AuditActor,
+    atCheckIn = false,
   ): Promise<void> {
     const payment = await tx.payment.create({
       data: {
@@ -473,64 +568,10 @@ export class ReservationsService {
         action: 'reservation.payment_recorded',
         entityType: 'Reservation',
         entityId: reservationId,
-        metadata: { reservationNumber, paymentId: payment.id, amount: payment.amount.toFixed(2), currencyCode, method: dto.method, isAdvance: true },
+        metadata: { reservationNumber, paymentId: payment.id, amount: payment.amount.toFixed(2), currencyCode, method: dto.method, isAdvance: true, ...(atCheckIn ? { atCheckIn: true } : {}) },
       },
       tx,
     );
-  }
-
-  // Loads the bookable rooms requested and refuses unknown, unbookable, over-filled, or already-booked rooms.
-  private async bookableRooms(
-    tx: Prisma.TransactionClient,
-    access: ReservationAccess,
-    inputs: ReservationRoomInputDto[],
-    checkIn: string,
-    checkOut: string,
-    excludeReservationId?: string,
-  ): Promise<Map<string, RoomRow>> {
-    const ids = inputs.map((input) => input.roomId);
-    if (new Set(ids).size !== ids.length) throw new BadRequestException(['Each room can be chosen only once.']);
-    const rows = await tx.room.findMany({ where: { id: { in: ids }, businessId: access.businessId, locationId: access.locationId, archivedAt: null }, select: ROOM_SELECT });
-    if (rows.length !== ids.length) throw new NotFoundException('One or more rooms were not found in this location.');
-    const rooms = new Map(rows.map((room) => [room.id, room]));
-    for (const input of inputs) {
-      const room = rooms.get(input.roomId)!;
-      const reason = unbookableReason(room);
-      if (reason) throw new ConflictException(`Room ${room.roomNumber} cannot be booked: ${reason.toLowerCase()}.`);
-      if ((input.extraBeds ?? 0) > room.maxExtraBeds) {
-        throw new BadRequestException([`Room ${room.roomNumber} allows at most ${room.maxExtraBeds} extra bed${room.maxExtraBeds === 1 ? '' : 's'}.`]);
-      }
-    }
-    const conflicts = await this.conflicts(tx, access, ids, checkIn, checkOut, excludeReservationId);
-    if (conflicts.size > 0) {
-      const taken = [...conflicts.keys()].map((roomId) => `${rooms.get(roomId)!.roomNumber} (${conflicts.get(roomId)})`).join(', ');
-      throw new ConflictException(`Not available for these dates: room ${taken}. Choose other rooms or dates.`);
-    }
-    return rooms;
-  }
-
-  // Finds rooms already held (reserved or checked in) for any night in [checkIn, checkOut): room ID -> reservation number.
-  private async conflicts(
-    db: Pick<Prisma.TransactionClient, 'reservationRoom'>,
-    access: ReservationAccess,
-    roomIds: string[],
-    checkIn: string,
-    checkOut: string,
-    excludeReservationId?: string,
-  ): Promise<Map<string, string>> {
-    if (roomIds.length === 0) return new Map();
-    const rows = await db.reservationRoom.findMany({
-      where: {
-        locationId: access.locationId,
-        roomId: { in: roomIds },
-        status: { in: HOLDING },
-        startDate: { lt: dateOnly(checkOut) },
-        endDate: { gt: dateOnly(checkIn) },
-        ...(excludeReservationId ? { reservationId: { not: excludeReservationId } } : {}),
-      },
-      select: { roomId: true, reservation: { select: { reservationNumber: true } } },
-    });
-    return new Map(rows.map((row) => [row.roomId, row.reservation.reservationNumber]));
   }
 
   // The active location's settings (time zone, code, currency, tax).
@@ -562,13 +603,18 @@ export class ReservationsService {
   }
 }
 
+// The stay part of a create or edit request, for the availability checks.
+function windowOf(dto: { checkInDate: string; checkOutDate: string; checkInTime?: string | null; checkOutTime?: string | null }): BookingWindow {
+  return { checkInDate: dto.checkInDate, checkOutDate: dto.checkOutDate, checkInTime: dto.checkInTime ?? null, checkOutTime: dto.checkOutTime ?? null };
+}
+
 // The business and location part of the access.
-function scopeOf(access: ReservationAccess): { businessId: string; locationId: string } {
+export function scopeOf(access: ReservationAccess): { businessId: string; locationId: string } {
   return { businessId: access.businessId, locationId: access.locationId };
 }
 
 // Refuses an action the role does not hold.
-function requirePermission(access: ReservationAccess, permission: Permission, message: string): void {
+export function requirePermission(access: ReservationAccess, permission: Permission, message: string): void {
   if (!hasPermission(access.role, permission)) throw new ForbiddenException(message);
 }
 
@@ -580,28 +626,19 @@ function assertTransition(from: ReservationStatus, to: ReservationStatus): void 
 }
 
 // Refuses a zero or negative amount.
-function assertPositive(amount: string, message: string): void {
+export function assertPositive(amount: string, message: string): void {
   if (!new Prisma.Decimal(amount).gt(0)) throw new BadRequestException([message]);
 }
 
 // Checks the guest belongs to the business and returns its ID.
-async function assertGuest(tx: Prisma.TransactionClient, access: ReservationAccess, guestId: string): Promise<string> {
+export async function assertGuest(tx: Prisma.TransactionClient, access: ReservationAccess, guestId: string): Promise<string> {
   const guest = await tx.guest.findFirst({ where: { id: guestId, businessId: access.businessId }, select: { id: true } });
   if (!guest) throw new NotFoundException('Guest not found.');
   return guest.id;
 }
 
-// Why a room cannot be booked at all (independent of dates), or null.
-function unbookableReason(room: RoomRow): string | null {
-  if (room.operationalStatus === 'OUT_OF_SERVICE') return 'Out of service';
-  if (room.operationalStatus !== 'ACTIVE') return 'Inactive';
-  if (!room.floor.isActive) return 'Floor inactive';
-  if (!room.roomType.isActive) return 'Room type inactive';
-  return null;
-}
-
 // The rooms must sleep everyone: capacity plus extra beds.
-function assertOccupancy(adults: number, children: number, inputs: ReservationRoomInputDto[], rooms: Map<string, RoomRow>): void {
+export function assertOccupancy(adults: number, children: number, inputs: ReservationRoomInputDto[], rooms: Map<string, RoomRow>): void {
   const sleeps = inputs.reduce((sum, input) => sum + rooms.get(input.roomId)!.capacity + (input.extraBeds ?? 0), 0);
   if (adults + children > sleeps) {
     throw new BadRequestException([`The chosen rooms sleep at most ${sleeps} guest${sleeps === 1 ? '' : 's'} (including extra beds). Add rooms or extra beds.`]);
@@ -609,7 +646,7 @@ function assertOccupancy(adults: number, children: number, inputs: ReservationRo
 }
 
 // Decides the agreed nightly rate: the room's standard rate, or a different rate with "billing.rateOverride" and a reason.
-function priceRoom(
+export function priceRoom(
   access: ReservationAccess,
   input: ReservationRoomInputDto,
   room: RoomRow,
@@ -622,18 +659,19 @@ function priceRoom(
   return { nightlyRate: new Prisma.Decimal(input.nightlyRate), rateOverridden: true, rateOverrideReason: input.rateOverrideReason };
 }
 
-// Takes the next reservation number of the location from the number sequence (row-locked by the upsert).
-async function nextNumber(tx: Prisma.TransactionClient, access: ReservationAccess): Promise<number> {
-  const [row] = await tx.$queryRaw<{ value: number }[]>`
-    INSERT INTO "number_sequences" ("businessId", "locationId", "kind", "nextValue", "updatedAt")
-    VALUES (${access.businessId}::uuid, ${access.locationId}::uuid, 'RESERVATION'::"NumberSequenceKind", 2, CURRENT_TIMESTAMP)
-    ON CONFLICT ("locationId", "kind") DO UPDATE SET "nextValue" = "number_sequences"."nextValue" + 1, "updatedAt" = CURRENT_TIMESTAMP
-    RETURNING ("nextValue" - 1)::int AS value`;
-  return row!.value;
+// Marks a checked-in reservation as checked out once none of its rooms is reserved or in house any more (every room
+// checked out or released). Called after each room checkout and each room release, inside the same transaction.
+export async function closeReservationIfDone(tx: Prisma.TransactionClient, reservationId: string): Promise<string> {
+  const open = await tx.reservationRoom.count({ where: { reservationId, status: { in: ['RESERVED', 'CHECKED_IN'] } } });
+  if (open > 0) return (await tx.reservation.findUniqueOrThrow({ where: { id: reservationId }, select: { status: true } })).status;
+  const done = await tx.reservationRoom.count({ where: { reservationId, status: 'CHECKED_OUT' } });
+  const status = done > 0 ? 'CHECKED_OUT' : 'CANCELLED';
+  await tx.reservation.updateMany({ where: { id: reservationId, status: 'CHECKED_IN' }, data: { status } });
+  return status;
 }
 
 // Sum of advance payments minus reversals.
-function paidOf(payments: { entryType: string; amount: Prisma.Decimal }[]): Prisma.Decimal {
+export function paidOf(payments: { entryType: string; amount: Prisma.Decimal }[]): Prisma.Decimal {
   return payments.reduce((sum, p) => (p.entryType === 'REVERSAL' ? sum.sub(p.amount) : sum.add(p.amount)), new Prisma.Decimal(0));
 }
 
@@ -654,7 +692,7 @@ function toListItem(row: ListRow): ReservationListItem {
     adults: row.adults,
     children: row.children,
     source: row.source as BookingSource | null,
-    estimate: estimate(row.rooms, nightsBetween(checkInDate, checkOutDate), row.location.taxRatePercent, paidOf(row.payments), row.location.currencyCode),
+    estimate: estimate(billableRooms(row.rooms), nightsBetween(checkInDate, checkOutDate), row.location.taxRatePercent, paidOf(row.payments), row.location.currencyCode),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -666,6 +704,8 @@ function toDetail(row: DetailRow, access: ReservationAccess, history: Reservatio
   const nights = nightsBetween(checkInDate, checkOutDate);
   const can = (permission: Permission) => hasPermission(access.role, permission);
   const confirmed = row.status === 'CONFIRMED';
+  // Rooms still waiting for check-in (a partly checked-in reservation keeps them reserved).
+  const waiting = row.rooms.some((r) => r.status === 'RESERVED');
   return {
     id: row.id,
     reservationNumber: row.reservationNumber,
@@ -682,12 +722,23 @@ function toDetail(row: DetailRow, access: ReservationAccess, history: Reservatio
       capacity: r.room.capacity,
       maxExtraBeds: r.room.maxExtraBeds,
       extraBeds: r.extraBeds,
+      standardRate: r.room.standardRate.toFixed(2),
       nightlyRate: r.nightlyRate.toFixed(2),
       extraBedRate: r.extraBedRate.toFixed(2),
       rateOverridden: r.rateOverridden,
       rateOverrideReason: r.rateOverrideReason,
       amount: roomAmount(r, nights).toFixed(2),
       status: r.status,
+      stay: r.stay
+        ? {
+            id: r.stay.id,
+            status: r.stay.status,
+            checkedInAt: r.stay.checkedInAt.toISOString(),
+            checkedOutAt: r.stay.checkedOutAt?.toISOString() ?? null,
+            grcNumber: r.stay.registrationCard?.grcNumber ?? null,
+            bill: r.stay.bill ? { id: r.stay.bill.id, billNumber: r.stay.bill.billNumber, total: r.stay.bill.grandTotal.toFixed(2), balance: r.stay.bill.balanceDue.toFixed(2) } : null,
+          }
+        : null,
     })),
     checkInDate,
     checkOutDate,
@@ -697,7 +748,7 @@ function toDetail(row: DetailRow, access: ReservationAccess, history: Reservatio
     children: row.children,
     source: row.source as BookingSource | null,
     notes: row.notes,
-    estimate: estimate(row.rooms, nights, row.location.taxRatePercent, paidOf(row.payments), row.location.currencyCode),
+    estimate: estimate(billableRooms(row.rooms), nights, row.location.taxRatePercent, paidOf(row.payments), row.location.currencyCode),
     payments: row.payments.map((p) => ({
       id: p.id,
       entryType: p.entryType,
@@ -722,6 +773,12 @@ function toDetail(row: DetailRow, access: ReservationAccess, history: Reservatio
       noShow: can('reservations.cancel') && confirmed && checkInDate <= todayInTimeZone(row.location.timezone),
       recordPayment: can('payments.record') && (confirmed || row.status === 'CHECKED_IN'),
       overrideRate: can('billing.rateOverride'),
+      checkIn:
+        can('stays.checkInOut') &&
+        (confirmed || (row.status === 'CHECKED_IN' && waiting)) &&
+        checkInDate <= todayInTimeZone(row.location.timezone) &&
+        checkOutDate > todayInTimeZone(row.location.timezone),
+      releaseRooms: can('reservations.cancel') && row.status === 'CHECKED_IN' && waiting,
     },
   };
 }
@@ -740,8 +797,18 @@ function describe(action: string, metadata: Prisma.JsonValue): string[] {
       if (rooms) lines.push(`Rooms: ${rooms.from.join(', ')} → ${rooms.to.join(', ')}`);
       return lines;
     }
-    case 'reservation.payment_recorded':
-      return [`Advance of ${m.currencyCode} ${m.amount} (${String(m.method).replace('_', ' ').toLowerCase()})`];
+    case 'reservation.payment_recorded': {
+      const label = m.atCheckIn ? 'Payment at check-in' : m.atCheckout ? 'Payment at checkout' : m.afterCheckout ? 'Payment after checkout' : 'Advance';
+      return [`${label} of ${m.currencyCode} ${m.amount} (${String(m.method).replace('_', ' ').toLowerCase()})`];
+    }
+    case 'reservation.checked_out':
+      return [`Checked out room ${m.roomNumber}`, `Bill ${m.billNumber}: total ${m.currencyCode} ${m.total}, balance ${m.currencyCode} ${m.balance}`];
+    case 'reservation.room_released':
+      return [`Room ${m.room} released`];
+    case 'reservation.checked_in':
+      return [m.walkIn ? 'Walk-in check-in' : 'Checked in', `GRC: ${((m.grcNumbers as string[] | undefined) ?? []).join(', ')}`];
+    case 'reservation.room_reassigned':
+      return [`Room changed: ${m.from} → ${m.to}`];
     case 'reservation.cancelled':
       return ['Cancelled'];
     case 'reservation.no_show':

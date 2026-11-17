@@ -31,11 +31,12 @@ import type { BusinessAuthContext } from '../../auth/auth-context.js';
 import { BusinessSessionGuard } from '../../auth/business-session.guard.js';
 import { CurrentBusinessUser, RequireActiveLocation, RequirePermissions } from '../../auth/decorators/auth.decorators.js';
 import { getClientMeta } from '../../common/http/client-meta.js';
+import { sendPrivateFile } from '../../common/http/private-file.js';
 import { businessUserActor } from '../../common/tenancy/property-scope.js';
 import { locationScope } from '../../common/tenancy/tenant-scope.js';
 import { UploadGuestDocumentDto } from './guest-document.dto.js';
 import type { UploadedFileInput } from './file-checks.js';
-import { GuestDocumentsService, type DocumentContent } from './guest-documents.service.js';
+import { GuestDocumentsService } from './guest-documents.service.js';
 
 // Multipart parsing for one file kept in memory: at most 5 MB, one file, and a few small text fields.
 const BaseUploadInterceptor = FileInterceptor('file', {
@@ -54,27 +55,6 @@ class DocumentUploadInterceptor extends BaseUploadInterceptor {
       throw error;
     }
   }
-}
-
-// Builds a Content-Disposition header with a safe ASCII name and the full UTF-8 name.
-function contentDisposition(kind: 'inline' | 'attachment', fileName: string): string {
-  const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\;]/g, '_');
-  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
-}
-
-// Sends a stored file with private, no-sniff headers.
-function sendFile(res: Response, file: DocumentContent, kind: 'inline' | 'attachment'): StreamableFile {
-  res.set({
-    'Content-Type': file.contentType,
-    'Content-Length': String(file.content.length),
-    'Content-Disposition': contentDisposition(kind, file.fileName),
-    'Cache-Control': 'private, no-store, max-age=0',
-    Pragma: 'no-cache',
-    'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
-    'Cross-Origin-Resource-Policy': 'same-origin',
-  });
-  return new StreamableFile(file.content);
 }
 
 // ID documents of one guest in the business user's business.
@@ -127,7 +107,7 @@ export class GuestDocumentsController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const file = await this.documents.read(locationScope(auth), guestId, documentId, 'preview', businessUserActor(auth, getClientMeta(req)));
-    return sendFile(res, file, 'inline');
+    return sendPrivateFile(res, file, 'inline');
   }
 
   // Streams the file as a download.
@@ -141,7 +121,7 @@ export class GuestDocumentsController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const file = await this.documents.read(locationScope(auth), guestId, documentId, 'download', businessUserActor(auth, getClientMeta(req)));
-    return sendFile(res, file, 'attachment');
+    return sendPrivateFile(res, file, 'attachment');
   }
 
   // Deletes a document (Admin and Manager): the record is kept for the audit trail, the file is removed.

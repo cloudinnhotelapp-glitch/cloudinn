@@ -3,7 +3,8 @@
 // Rules: the email address and the ID document (type + number) are unique within a business; the ID type and number are
 // given together or not at all; restricted notes are read and written only by roles with "guests.notes.view".
 // Guests are never deleted (history is kept; see docs/architecture.md §8a). Audit entries record which fields changed,
-// never the personal values themselves.
+// never the personal values themselves. Consent to WhatsApp offers is off unless staff record the guest's agreement; its
+// time is kept, and withdrawing it clears the time (owner decision 2026-11-11).
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { GuestDetail, GuestSummary, Paginated } from '@hms/shared';
 import type { Guest, Prisma } from '../generated/prisma/client.js';
@@ -41,6 +42,7 @@ const FIELDS = [
   'idDocumentType',
   'idDocumentNumber',
   'notes',
+  'whatsappOffersConsent',
 ] as const;
 
 // Service holding the guest rules for business users.
@@ -95,7 +97,8 @@ export class GuestsService {
     const values = toData(dto);
     assertIdPair(values.idDocumentType ?? null, values.idDocumentNumber ?? null);
     await assertNoDuplicate(tx, access.businessId, values.email ?? null, values.idDocumentType ?? null, values.idDocumentNumber ?? null);
-    const created = await tx.guest.create({ data: { ...values, fullName: dto.fullName, businessId: access.businessId }, include: WITH_COUNTS });
+    const consentAt = values.whatsappOffersConsent ? { whatsappOffersConsentAt: new Date() } : {};
+    const created = await tx.guest.create({ data: { ...values, ...consentAt, fullName: dto.fullName, businessId: access.businessId }, include: WITH_COUNTS });
     await this.audit.record(
       {
         ...actor,
@@ -104,7 +107,7 @@ export class GuestsService {
         action: 'guest.created',
         entityType: 'Guest',
         entityId: created.id,
-        metadata: { providedFields: FIELDS.filter((key) => created[key] !== null) },
+        metadata: { providedFields: FIELDS.filter((key) => created[key] !== null && created[key] !== false) },
       },
       tx,
     );
@@ -135,7 +138,8 @@ export class GuestsService {
           id,
         );
       }
-      const updated = await tx.guest.update({ where: { id }, data: values, include: WITH_COUNTS });
+      const consentAt = changed.includes('whatsappOffersConsent') ? { whatsappOffersConsentAt: values.whatsappOffersConsent ? new Date() : null } : {};
+      const updated = await tx.guest.update({ where: { id }, data: { ...values, ...consentAt }, include: WITH_COUNTS });
       await this.audit.record(
         {
           ...actor,
@@ -236,6 +240,7 @@ function toSummary(guest: GuestWithCounts): GuestSummary {
     idDocumentType: guest.idDocumentType,
     idDocumentNumberMasked: maskIdNumber(guest.idDocumentNumber),
     reservationCount: guest._count.reservations,
+    whatsappOffersConsent: guest.whatsappOffersConsent,
     createdAt: guest.createdAt.toISOString(),
   };
 }
@@ -253,6 +258,7 @@ function toDetail(guest: GuestWithCounts, canSeeNotes: boolean): GuestDetail {
     notesVisible: canSeeNotes,
     notes: canSeeNotes ? guest.notes : null,
     documentCount: guest._count.documents,
+    whatsappOffersConsentAt: guest.whatsappOffersConsentAt ? guest.whatsappOffersConsentAt.toISOString() : null,
     updatedAt: guest.updatedAt.toISOString(),
   };
 }

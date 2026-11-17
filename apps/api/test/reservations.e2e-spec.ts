@@ -107,7 +107,7 @@ describe('Reservations (e2e)', () => {
       })
       .expect(201);
     const body = response.body;
-    expect(body.reservationNumber).toMatch(/^L1[A-Z0-9]{4}-R\d{6}$/);
+    expect(body.reservationNumber).toMatch(/^L1[A-Z0-9]{8}-R\d{6}$/);
     expect(body).toMatchObject({ status: 'CONFIRMED', checkInTime: '14:00', checkOutTime: '11:00', adults: 3, children: 1, source: 'PHONE', notes: 'Late arrival' });
     expect(body.rooms.map((r: { roomNumber: string; amount: string }) => [r.roomNumber, r.amount])).toEqual([
       ['101', '7000.00'],

@@ -13,6 +13,13 @@ import { RoomTypesModule } from './room-types/room-types.module.js';
 import { RoomsModule } from './rooms/rooms.module.js';
 import { GuestsModule } from './guests/guests.module.js';
 import { ReservationsModule } from './reservations/reservations.module.js';
+import { AvailabilityModule } from './availability/availability.module.js';
+import { StaysModule } from './stays/stays.module.js';
+import { BillingModule } from './billing/billing.module.js';
+import { HousekeepingModule } from './housekeeping/housekeeping.module.js';
+import { ReportsModule } from './reports/reports.module.js';
+import { CalendarModule } from './calendar/calendar.module.js';
+import { StaffModule } from './staff/staff.module.js';
 import { FileStorageModule } from './file-storage/file-storage.module.js';
 import { LocationsModule } from './locations/locations.module.js';
 import { UsersModule } from './users/users.module.js';
@@ -55,6 +62,13 @@ const ROOT_ENV_FILE = fileURLToPath(new URL('../../../.env', import.meta.url));
     RoomsModule,
     GuestsModule,
     ReservationsModule,
+    AvailabilityModule,
+    StaysModule,
+    BillingModule,
+    HousekeepingModule,
+    ReportsModule,
+    CalendarModule,
+    StaffModule,
     HealthModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],

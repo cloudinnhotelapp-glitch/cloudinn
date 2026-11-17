@@ -33,16 +33,16 @@ export interface SummaryCardProps {
 export function SummaryCard({ label, value, icon, tone, detail, href }: SummaryCardProps) {
   const body = (
     <>
-      <span aria-hidden="true" className={`absolute right-0 top-0 -mr-12 -mt-12 h-24 w-24 rounded-full transition-transform duration-500 group-hover:scale-110 ${TONES[tone].corner}`} />
+      <span aria-hidden="true" className={`absolute right-0 top-0 -mr-12 -mt-12 h-24 w-24 rounded-full transition-transform duration-500 group-hover:scale-110 dark:opacity-10 ${TONES[tone].corner}`} />
       <div className="relative z-10">
         <span className={`mb-2 flex h-10 w-10 items-center justify-center rounded-xl ${TONES[tone].tile}`}>
           <Icon name={icon} className="h-5 w-5" />
         </span>
-        <dt className="mb-0.5 truncate text-[9px] font-bold uppercase tracking-widest text-slate-400">{label}</dt>
+        <dt className="mb-0.5 break-words text-[9px] font-bold uppercase leading-tight tracking-widest text-slate-400 sm:truncate">{label}</dt>
         <dd className="m-0 text-2xl font-black leading-tight text-slate-900 tabular-nums dark:text-white" data-testid="summary-value">
           {value}
         </dd>
-        {detail && <dd className="m-0 mt-2 truncate text-[11px] font-medium text-slate-500">{detail}</dd>}
+        {detail && <dd className="m-0 mt-2 break-words text-[11px] font-medium text-slate-500 sm:truncate">{detail}</dd>}
       </div>
     </>
   );

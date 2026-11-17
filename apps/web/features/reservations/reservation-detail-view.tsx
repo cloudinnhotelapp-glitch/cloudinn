@@ -1,12 +1,12 @@
 // Reservation page of the business app (/reservations/:id): status, guest, stay, rooms with agreed rates, estimated
 // charges and tax, advance payments, outstanding estimate, who created it, cancellation details, and the change history.
-// Actions (edit, record payment, no-show, cancel) appear only when the server says the user may take them now.
+// Actions (edit, change a room, record payment, no-show, cancel) appear only when the server says the user may take them now.
 'use client';
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
-import { BOOKING_SOURCE_LABELS, PAYMENT_METHOD_LABELS, RESERVATION_STATUS_LABELS, type ReservationDetail } from '@hms/shared';
+import { BOOKING_SOURCE_LABELS, PAYMENT_METHOD_LABELS, RESERVATION_STATUS_LABELS, type ReservationDetail, type ReservationRoomDetail } from '@hms/shared';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icons';
 import { useNotify } from '@/components/ui/notifications';
@@ -15,7 +15,8 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { useBusinessSession } from '@/features/business/business-session';
 import { useApiQuery } from '@/hooks/use-api-query';
 import { formatDateTime } from '@/lib/format';
-import { advanceBadge, formatDay, formatGuests, formatMoney } from './reservation-format';
+import { advanceBadge, formatDateTimeIn, formatDay, formatGuests, formatMoney } from './reservation-format';
+import { ChangeRoomDialog, ReleaseRoomDialog } from './change-room-dialog';
 import { CancelReservationDialog, NoShowDialog, PaymentDialog, summaryOf, type ReservationSummary } from './reservation-dialogs';
 
 // Loads the reservation from the URL and renders the page.
@@ -26,6 +27,8 @@ export function ReservationDetailView() {
   const allowed = can('reservations.manage');
   const { data: r, error, loading, reload } = useApiQuery<ReservationDetail>(allowed ? `/reservations/${reservationId}` : null);
   const [dialog, setDialog] = useState<{ kind: 'cancel' | 'noShow' | 'payment'; summary: ReservationSummary } | null>(null);
+  const [changing, setChanging] = useState<ReservationRoomDetail | null>(null);
+  const [releasing, setReleasing] = useState<ReservationRoomDetail | null>(null);
 
   if (!info) return <LoadingState />;
   if (!allowed) return <EmptyState message="You do not have access to reservations." />;
@@ -34,6 +37,9 @@ export function ReservationDetailView() {
   if (!r) return null;
   const money = (amount: string) => formatMoney(amount, r.estimate.currencyCode);
   const badge = advanceBadge(r.estimate.advanceStatus);
+  // A room can be moved while it is still waiting for check-in (also on a partly checked-in reservation).
+  const canChange = (room: ReservationRoomDetail) => room.status === 'RESERVED' && (r.allowed.edit || (r.status === 'CHECKED_IN' && can('reservations.manage')));
+  const roomActions = r.rooms.some((room) => canChange(room) || (r.allowed.releaseRooms && room.status === 'RESERVED') || (room.stay?.status === 'IN_HOUSE' && can('stays.checkInOut')));
   const done = (message: string) => (updated: ReservationDetail) => {
     notify(message.replace('{n}', updated.reservationNumber));
     reload();
@@ -80,6 +86,18 @@ export function ReservationDetailView() {
             <Link href={`/reservations/${r.id}/edit`} className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white no-underline hover:bg-brand-600">
               <Icon name="edit" className="h-5 w-5" />
               Edit reservation
+            </Link>
+          )}
+          {r.rooms.some((room) => room.stay) && can('stays.checkInOut') && (
+            <Link href={`/registration-cards/${r.id}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+              <Icon name="file" className="h-5 w-5" />
+              Registration cards
+            </Link>
+          )}
+          {r.allowed.checkIn && (
+            <Link href={`/check-in/reservations/${r.id}`} className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white no-underline hover:bg-brand-600">
+              <Icon name="key" className="h-5 w-5" />
+              Check in
             </Link>
           )}
         </div>
@@ -138,6 +156,8 @@ export function ReservationDetailView() {
                 <th>Extra beds</th>
                 <th className="text-right">Rate / night</th>
                 <th className="text-right">Amount</th>
+                {r.rooms.some((room) => room.stay) && <th>Stay</th>}
+                {roomActions && <th className="text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -155,12 +175,63 @@ export function ReservationDetailView() {
                     {room.rateOverridden && <div className="text-xs text-amber-700">Agreed rate: {room.rateOverrideReason}</div>}
                   </td>
                   <td className="text-right tabular-nums">{money(room.amount)}</td>
+                  {r.rooms.some((other) => other.stay) && (
+                    <td className="whitespace-nowrap">
+                      {room.stay ? (
+                        <>
+                          <StatusBadge status={room.stay.status === 'IN_HOUSE' ? 'CHECKED_IN' : 'CHECKED_OUT'} label={room.stay.status === 'IN_HOUSE' ? 'In house' : 'Checked out'} />
+                          <div className="text-xs text-slate-500">
+                            GRC {room.stay.grcNumber} · {formatDateTimeIn(room.stay.checkedInAt, r.location.timezone)}
+                          </div>
+                          {room.stay.bill && (
+                            <Link href={`/bills/${room.stay.bill.id}`} className="text-xs font-semibold">
+                              Bill {room.stay.bill.billNumber}
+                              {Number(room.stay.bill.balance) > 0 ? ` · balance ${money(room.stay.bill.balance)}` : ''}
+                            </Link>
+                          )}
+                        </>
+                      ) : room.status === 'CANCELLED' && r.status !== 'CANCELLED' ? (
+                        'Released'
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  )}
+                  {roomActions && (
+                    <td className="text-right">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {room.stay?.status === 'IN_HOUSE' && can('stays.checkInOut') && (
+                          <Link
+                            href={`/check-out/stays/${room.stay.id}`}
+                            aria-label={`Check out room ${room.roomNumber}`}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                          >
+                            <Icon name="departures" className="h-[18px] w-[18px]" />
+                            Check out
+                          </Link>
+                        )}
+                        {canChange(room) && (
+                          <Button size="sm" variant="secondary" onClick={() => setChanging(room)} aria-label={`Change room ${room.roomNumber}`}>
+                            <Icon name="swap" className="h-[18px] w-[18px]" />
+                            Change room
+                          </Button>
+                        )}
+                        {r.allowed.releaseRooms && room.status === 'RESERVED' && (
+                          <Button size="sm" variant="softDanger" onClick={() => setReleasing(room)} aria-label={`Release room ${room.roomNumber}`}>
+                            Release
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </section>
+      <ChangeRoomDialog reservation={r} room={changing} onClose={() => setChanging(null)} onDone={done('Room changed on {n}.')} />
+      <ReleaseRoomDialog reservation={r} room={releasing} onClose={() => setReleasing(null)} onDone={done('Room released on {n}.')} />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <section aria-label="Charges" className="ui-card p-5">

@@ -13,7 +13,7 @@ test.describe('CloudInn branding', () => {
   test('login pages show CloudInn', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/login');
-    await expect(page).toHaveTitle('Staff login · CloudInn');
+    await expect(page).toHaveTitle('Business login · CloudInn');
     await expect(page.getByRole('heading', { name: 'Welcome to CloudInn' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'CloudInn home' })).toContainText('CloudInn');
     await expectNoOldName(page);
@@ -59,6 +59,8 @@ test.describe('CloudInn branding', () => {
     await page.getByRole('button', { name: 'Toggle sidebar' }).click();
 
     await page.setViewportSize({ width: 390, height: 844 });
+    // Waits for the layout to finish changing: the edge toggle goes away and only the header's menu button remains.
+    await expect(page.getByRole('button', { name: 'Toggle sidebar' })).toHaveCount(1);
     await page.getByRole('button', { name: 'Toggle sidebar' }).click();
     await expect(sidebar).toBeInViewport();
     await expect(sidebar.getByRole('link', { name: 'Home' })).toContainText('CloudInn');

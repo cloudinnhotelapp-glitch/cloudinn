@@ -60,7 +60,9 @@ export async function createTenant(prisma: PrismaClient, options: TenantOptions 
       data: {
         businessId: business.id,
         name: `Location ${i + 1} ${suffix}`,
-        code: `L${i + 1}${suffix.slice(0, 4)}`.toUpperCase(),
+        // Eight random characters (the column holds 12): with only four, codes started to repeat once the test database
+        // held a few thousand test locations, which broke searches across businesses.
+        code: `L${i + 1}${suffix.slice(0, 8)}`.toUpperCase(),
         timezone: 'Asia/Kolkata',
         currencyCode: 'INR',
         taxRatePercent: '12.00',

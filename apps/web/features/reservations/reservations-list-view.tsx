@@ -1,4 +1,5 @@
-// Reservations page of the business app (/reservations) for the active location: search by reservation number, guest
+// Reservations page of the business app (/reservations: booked reservations only) and the Walk-in Check-ins page
+// (/walk-ins: walk-in check-ins only; owner request 2026-11-12), for the active location: search by reservation number, guest
 // name, or phone; filter by status, stay dates, and room type; sort; paginate; and view, edit, record an advance, or
 // cancel from the row menu (each offered only when the role and status allow it; the API checks again). No guest ID
 // details are shown here.
@@ -45,8 +46,15 @@ function summaryFromRow(r: ReservationListItem): ReservationSummary {
   };
 }
 
+// What each page shows.
+const KINDS = {
+  BOOKED: { id: 'reservation', title: 'Reservations', subtitle: 'Bookings made with Room Reservation, Group Reservation, or the reservation form, for your current location.', empty: 'No reservations yet. Create the first one to get started.' },
+  WALK_IN: { id: 'walk-in', title: 'Walk-in Check-ins', subtitle: 'Guests checked in without a reservation, for your current location.', empty: 'No walk-in check-ins yet.' },
+} as const;
+
 // Loads one page of reservations and renders the toolbar, table, and popups.
-export function ReservationsListView() {
+export function ReservationsListView({ kind = 'BOOKED' }: { kind?: keyof typeof KINDS }) {
+  const page_ = KINDS[kind];
   const notify = useNotify();
   const { info, can } = useBusinessSession();
   const allowed = can('reservations.manage');
@@ -61,7 +69,7 @@ export function ReservationsListView() {
   const [pageSize, setPageSize] = useState<number>(20);
   const [cancelling, setCancelling] = useState<ReservationSummary | null>(null);
   const [paying, setPaying] = useState<ReservationSummary | null>(null);
-  const reservations = useApiQuery<Paginated<ReservationListItem>>(allowed ? '/reservations' : null, { search, status, from, to, roomTypeId, sort, page, pageSize });
+  const reservations = useApiQuery<Paginated<ReservationListItem>>(allowed ? '/reservations' : null, { kind, search, status, from, to, roomTypeId, sort, page, pageSize });
   const roomTypes = useApiQuery<RoomTypeDetail[]>(allowed ? '/room-types' : null);
 
   if (!info) return <LoadingState />;
@@ -86,25 +94,25 @@ export function ReservationsListView() {
     <section className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="ui-page-title">Reservations</h1>
-          <p className="text-sm text-slate-500">Bookings for your current location.</p>
+          <h1 className="ui-page-title">{page_.title}</h1>
+          <p className="text-sm text-slate-500">{page_.subtitle}</p>
         </div>
-        <Link href="/reservations/new" className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white no-underline transition-colors hover:bg-brand-600">
+        <Link href={kind === 'WALK_IN' ? '/check-in/walk-in' : '/reservations/new'} className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white no-underline transition-colors hover:bg-brand-600">
           <Icon name="plus" className="h-5 w-5" />
-          New reservation
+          {kind === 'WALK_IN' ? 'New walk-in check-in' : 'New reservation'}
         </Link>
       </div>
 
       <div className="ui-list-panel">
         <div className="flex flex-wrap items-center gap-2">
           <form onSubmit={applySearch} role="search" className="flex min-w-[16rem] flex-1 gap-2">
-            <label htmlFor="reservation-search" className="sr-only">
+            <label htmlFor={`${page_.id}-search`} className="sr-only">
               Search reservations
             </label>
             <div className="relative flex min-w-0 flex-1 items-center sm:max-w-[280px]">
               <Icon name="search" className="pointer-events-none absolute left-3 h-[18px] w-[18px] text-slate-400" />
               <input
-                id="reservation-search"
+                id={`${page_.id}-search`}
                 className={searchInputClass}
                 placeholder="Number, guest name, or phone"
                 maxLength={100}
@@ -117,10 +125,10 @@ export function ReservationsListView() {
             </Button>
           </form>
           <div className="w-full sm:w-40">
-            <label htmlFor="reservation-status-filter" className="sr-only">
+            <label htmlFor={`${page_.id}-status-filter`} className="sr-only">
               Status
             </label>
-            <select id="reservation-status-filter" className={`${compactInputClass} w-full`} value={status} onChange={(e) => filter(setStatus)(e.target.value)}>
+            <select id={`${page_.id}-status-filter`} className={`${compactInputClass} w-full`} value={status} onChange={(e) => filter(setStatus)(e.target.value)}>
               <option value="">All statuses</option>
               {RESERVATION_STATUSES.map((value) => (
                 <option key={value} value={value}>
@@ -130,10 +138,10 @@ export function ReservationsListView() {
             </select>
           </div>
           <div className="w-full sm:w-44">
-            <label htmlFor="reservation-room-type-filter" className="sr-only">
+            <label htmlFor={`${page_.id}-room-type-filter`} className="sr-only">
               Room type
             </label>
-            <select id="reservation-room-type-filter" className={`${compactInputClass} w-full`} value={roomTypeId} onChange={(e) => filter(setRoomTypeId)(e.target.value)}>
+            <select id={`${page_.id}-room-type-filter`} className={`${compactInputClass} w-full`} value={roomTypeId} onChange={(e) => filter(setRoomTypeId)(e.target.value)}>
               <option value="">All room types</option>
               {roomTypes.data?.map((type) => (
                 <option key={type.id} value={type.id}>
@@ -143,20 +151,20 @@ export function ReservationsListView() {
             </select>
           </div>
           <div className="flex w-full items-center gap-2 sm:w-auto">
-            <label htmlFor="reservation-from" className="text-xs font-semibold text-slate-500">
+            <label htmlFor={`${page_.id}-from`} className="text-xs font-semibold text-slate-500">
               From
             </label>
-            <input id="reservation-from" type="date" className={`${compactInputClass} min-w-0 flex-1 pr-4!`} value={from} onChange={(e) => filter(setFrom)(e.target.value)} />
-            <label htmlFor="reservation-to" className="text-xs font-semibold text-slate-500">
+            <input id={`${page_.id}-from`} type="date" className={`${compactInputClass} min-w-0 flex-1 pr-4!`} value={from} onChange={(e) => filter(setFrom)(e.target.value)} />
+            <label htmlFor={`${page_.id}-to`} className="text-xs font-semibold text-slate-500">
               To
             </label>
-            <input id="reservation-to" type="date" className={`${compactInputClass} min-w-0 flex-1 pr-4!`} value={to} onChange={(e) => filter(setTo)(e.target.value)} />
+            <input id={`${page_.id}-to`} type="date" className={`${compactInputClass} min-w-0 flex-1 pr-4!`} value={to} onChange={(e) => filter(setTo)(e.target.value)} />
           </div>
           <div className="w-full sm:w-44">
-            <label htmlFor="reservation-sort" className="sr-only">
+            <label htmlFor={`${page_.id}-sort`} className="sr-only">
               Sort by
             </label>
-            <select id="reservation-sort" className={`${compactInputClass} w-full`} value={sort} onChange={(e) => filter(setSort)(e.target.value)}>
+            <select id={`${page_.id}-sort`} className={`${compactInputClass} w-full`} value={sort} onChange={(e) => filter(setSort)(e.target.value)}>
               <option value="newest">Newest first</option>
               <option value="checkInAsc">Check-in (soonest)</option>
               <option value="checkInDesc">Check-in (latest)</option>
@@ -168,7 +176,7 @@ export function ReservationsListView() {
         {reservations.error ? <ErrorState error={reservations.error} onRetry={reservations.reload} /> : null}
         {reservations.loading && !reservations.data ? <LoadingState /> : null}
         {reservations.data && reservations.data.items.length === 0 && (
-          <EmptyState message={filtered ? 'No reservations match these filters.' : 'No reservations yet. Create the first one to get started.'} />
+          <EmptyState message={filtered ? 'No reservations match these filters.' : page_.empty} />
         )}
         {reservations.data && reservations.data.items.length > 0 && (
           <div className="ui-table-wrap">

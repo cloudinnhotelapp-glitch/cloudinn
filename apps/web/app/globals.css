@@ -3,6 +3,18 @@
    slate neutrals, white cards with hairline borders on a pale page background, and Google Sans throughout. */
 @import "tailwindcss";
 
+/* The "dark:" styles apply when a business user chose dark, or when no choice was made and the device uses dark mode. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
 /* Base page colours for light mode (pale slate page background, near-black slate text). */
 :root {
   --background: #f8fafc;
@@ -54,11 +66,26 @@
   --color-brand-950: var(--color-teal-950);
 }
 
-/* Darker page colours when the operating system uses dark mode. */
+/* Darker page colours: the user's choice first, otherwise the operating system's mode. Native controls follow through color-scheme. */
+:root[data-theme="dark"] {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+  --color-shell: #0f172a;
+  --color-shell-line: #1e293b;
+  --color-canvas: #0b1120;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: #0b1120;
     --foreground: #e2e8f0;
+    --color-shell: #0f172a;
+    --color-shell-line: #1e293b;
+    --color-canvas: #0b1120;
+    color-scheme: dark;
   }
 }
 
@@ -74,6 +101,26 @@ body {
   --color-shell: #f2faf6;
   --color-shell-line: #e2f2e9;
   --color-canvas: #f8fafc;
+  /* Heartbeat of the header's "Check-outs today" bell while rooms are due (owner request 2026-11-16). */
+  --animate-heartbeat: heartbeat 1.4s ease-in-out infinite;
+}
+
+/* Two quick beats, then a rest, like a pulse. */
+@keyframes heartbeat {
+  0%,
+  45%,
+  100% {
+    transform: scale(1);
+  }
+  12% {
+    transform: scale(1.22);
+  }
+  24% {
+    transform: scale(1);
+  }
+  34% {
+    transform: scale(1.16);
+  }
 }
 
 /* Shared component classes: one definition for page titles, cards, data tables, and small buttons, so pages never
@@ -161,7 +208,7 @@ body {
     @apply bg-white transition-colors hover:bg-emerald-50/30 dark:bg-transparent;
   }
   .ui-table tbody tr:nth-child(even) {
-    @apply bg-slate-50/30;
+    @apply bg-slate-50/30 dark:bg-slate-800/30;
   }
   .ui-table tbody tr:last-child td {
     @apply border-b-0;
@@ -219,11 +266,11 @@ body {
 
   /* Filter pill (status tabs): active is slate-900, inactive white with a slate-200 border. */
   .ui-filter-pill {
-    @apply inline-flex items-center whitespace-nowrap rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50;
+    @apply inline-flex items-center whitespace-nowrap rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800;
   }
   .ui-filter-pill[aria-current='page'],
   .ui-filter-pill[aria-pressed='true'] {
-    @apply border-slate-900 bg-slate-900 text-white hover:bg-slate-900;
+    @apply border-slate-900 bg-slate-900 text-white hover:bg-slate-900 dark:border-emerald-600 dark:bg-emerald-700 dark:hover:bg-emerald-700;
   }
 }
 /* Faint dot pattern drawn above the element's own background (such as a gradient) and beneath its content. */
@@ -335,4 +382,166 @@ select:not([multiple]):not([size]) {
   background-size: 1em 1em;
   padding-right: 2.25em;
   text-overflow: ellipsis;
+}
+/* Printing a Guest Registration Card (Phase 6.5): only the cards (.print-area) are printed, without the sidebar, header,
+   buttons, colours, or shadows; each card starts on its own page. Elements marked .print-hide never print. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+  }
+  .print-hide {
+    display: none !important;
+  }
+  .grc-card {
+    break-after: page;
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+}
+
+/* Dark theme for business pages and the Super Admin console: colour classes with no "dark:" partner get a matching dark
+   colour, so no screen stays light by accident. The :not() guards leave any explicit "dark:" choice alone. Limited to the
+   two apps (sign-in pages keep their own look). */
+@variant dark {
+  .business-app,
+  .console-app {
+    .bg-white:not([class*="dark:bg-"]),
+    .bg-white\/90:not([class*="dark:bg-"]),
+    .bg-white\/70:not([class*="dark:bg-"]) {
+      background-color: var(--color-slate-900);
+    }
+    .bg-slate-50:not([class*="dark:bg-"]),
+    .bg-gray-50:not([class*="dark:bg-"]),
+    .bg-slate-100:not([class*="dark:bg-"]),
+    .bg-slate-50\/50:not([class*="dark:bg-"]) {
+      background-color: var(--color-slate-800);
+    }
+    .bg-slate-200:not([class*="dark:bg-"]) {
+      background-color: var(--color-slate-700);
+    }
+    .bg-emerald-50:not([class*="dark:bg-"]),
+    .bg-emerald-50\/50:not([class*="dark:bg-"]),
+    .bg-emerald-50\/60:not([class*="dark:bg-"]),
+    .bg-brand-50:not([class*="dark:bg-"]),
+    .bg-emerald-100:not([class*="dark:bg-"]) {
+      background-color: var(--color-emerald-950);
+    }
+    .bg-red-50:not([class*="dark:bg-"]),
+    .bg-red-50\/40:not([class*="dark:bg-"]),
+    .bg-red-50\/60:not([class*="dark:bg-"]) {
+      background-color: var(--color-red-950);
+    }
+    .bg-blue-50:not([class*="dark:bg-"]),
+    .bg-blue-100:not([class*="dark:bg-"]) {
+      background-color: var(--color-blue-950);
+    }
+    .bg-amber-50:not([class*="dark:bg-"]),
+    .bg-amber-100:not([class*="dark:bg-"]) {
+      background-color: var(--color-amber-950);
+    }
+    .bg-violet-50:not([class*="dark:bg-"]),
+    .bg-violet-100:not([class*="dark:bg-"]) {
+      background-color: var(--color-violet-950);
+    }
+    .bg-sky-50:not([class*="dark:bg-"]),
+    .bg-sky-100:not([class*="dark:bg-"]) {
+      background-color: var(--color-sky-950);
+    }
+    .bg-rose-50:not([class*="dark:bg-"]),
+    .bg-rose-100:not([class*="dark:bg-"]) {
+      background-color: var(--color-rose-950);
+    }
+    .text-slate-900:not([class*="dark:text-"]),
+    .text-slate-800:not([class*="dark:text-"]),
+    .text-gray-900:not([class*="dark:text-"]),
+    .text-amber-950:not([class*="dark:text-"]),
+    .text-amber-900:not([class*="dark:text-"]) {
+      color: var(--color-slate-100);
+    }
+    .text-slate-700:not([class*="dark:text-"]) {
+      color: var(--color-slate-200);
+    }
+    .text-slate-600:not([class*="dark:text-"]),
+    .text-gray-600:not([class*="dark:text-"]) {
+      color: var(--color-slate-300);
+    }
+    .text-slate-500:not([class*="dark:text-"]) {
+      color: var(--color-slate-400);
+    }
+    .text-emerald-700:not([class*="dark:text-"]),
+    .text-emerald-800:not([class*="dark:text-"]),
+    .text-brand-700:not([class*="dark:text-"]),
+    .text-brand-800:not([class*="dark:text-"]) {
+      color: var(--color-emerald-300);
+    }
+    .text-emerald-600:not([class*="dark:text-"]) {
+      color: var(--color-emerald-400);
+    }
+    .text-red-600:not([class*="dark:text-"]),
+    .text-red-700:not([class*="dark:text-"]),
+    .text-red-800:not([class*="dark:text-"]) {
+      color: var(--color-red-300);
+    }
+    .text-blue-600:not([class*="dark:text-"]),
+    .text-blue-700:not([class*="dark:text-"]) {
+      color: var(--color-blue-300);
+    }
+    .text-amber-700:not([class*="dark:text-"]),
+    .text-amber-600:not([class*="dark:text-"]) {
+      color: var(--color-amber-300);
+    }
+    .text-violet-700:not([class*="dark:text-"]),
+    .text-violet-600:not([class*="dark:text-"]) {
+      color: var(--color-violet-300);
+    }
+    .border-slate-100:not([class*="dark:border-"]),
+    .border-slate-200:not([class*="dark:border-"]),
+    .border-slate-300:not([class*="dark:border-"]),
+    .border-gray-100:not([class*="dark:border-"]),
+    .border-gray-200:not([class*="dark:border-"]) {
+      border-color: var(--color-slate-700);
+    }
+    .border-red-200:not([class*="dark:border-"]) {
+      border-color: var(--color-red-900);
+    }
+    .border-emerald-200:not([class*="dark:border-"]) {
+      border-color: var(--color-emerald-900);
+    }
+    .border-amber-200:not([class*="dark:border-"]) {
+      border-color: var(--color-amber-900);
+    }
+    .border-blue-200:not([class*="dark:border-"]) {
+      border-color: var(--color-blue-900);
+    }
+    .hover\:bg-slate-50:hover:not([class*="dark:hover:bg-"]),
+    .hover\:bg-slate-100:hover:not([class*="dark:hover:bg-"]),
+    .hover\:bg-emerald-100\/40:hover:not([class*="dark:hover:bg-"]),
+    .hover\:bg-emerald-50:hover:not([class*="dark:hover:bg-"]) {
+      background-color: var(--color-slate-800);
+    }
+    .hover\:bg-red-50:hover:not([class*="dark:hover:bg-"]),
+    .hover\:bg-red-100:hover:not([class*="dark:hover:bg-"]) {
+      background-color: var(--color-red-950);
+    }
+    .hover\:text-slate-900:hover:not([class*="dark:hover:text-"]),
+    .hover\:text-slate-800:hover:not([class*="dark:hover:text-"]),
+    .hover\:text-brand-800:hover:not([class*="dark:hover:text-"]) {
+      color: var(--color-slate-100);
+    }
+    .divide-slate-100:not([class*="dark:divide-"]) > :not(:last-child),
+    .divide-slate-50:not([class*="dark:divide-"]) > :not(:last-child) {
+      border-color: var(--color-slate-800);
+    }
+  }
 }

@@ -307,7 +307,7 @@ export class BusinessUsersService {
 
   // Loads a user with assigned locations, or throws 404 (archived users, or users of archived businesses, count as missing).
   private async findOrThrow(id: string): Promise<UserWithLocations> {
-    const user = await this.prisma.businessUser.findFirst({ where: { id, ...LIVE_BUSINESS_USER }, include: WITH_LOCATIONS });
+    const user = await this.prisma.businessUser.findFirst({ where: { id, ...LIVE_BUSINESS_USER, role: { not: 'STAFF' } }, include: WITH_LOCATIONS });
     if (!user) throw new NotFoundException('User not found.');
     return user;
   }
@@ -319,9 +319,9 @@ function toDetail(row: UserWithLocations): BusinessUserDetail {
     id: row.id,
     businessId: row.businessId,
     business: row.business,
-    email: row.email,
+    email: row.email ?? '',
     name: row.name,
-    role: row.role,
+    role: row.role as BusinessUserDetail['role'],
     status: row.status,
     lockedUntil: row.lockedUntil && row.lockedUntil > new Date() ? row.lockedUntil.toISOString() : null,
     lastLoginAt: row.lastLoginAt?.toISOString() ?? null,

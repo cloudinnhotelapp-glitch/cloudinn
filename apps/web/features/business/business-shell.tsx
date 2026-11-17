@@ -2,11 +2,13 @@
 // top header, and the page area. The page re-mounts when the location changes so its data reloads.
 'use client';
 
+import { InteractiveAfterHydration } from '@/components/layout/interactive-after-hydration';
 import { usePathname } from 'next/navigation';
 import { useCallback, useState, type ReactNode } from 'react';
 import { EmptyState } from '@/components/ui/states';
 import { useAppSidebar } from '@/hooks/use-app-sidebar';
 import { BUSINESS_PATHS, BusinessSessionGate, useBusinessSession } from './business-session';
+import { MobileTabBar } from './layout/mobile-tab-bar';
 import { Sidebar } from './layout/sidebar';
 import { TopHeader } from './layout/top-header';
 
@@ -40,15 +42,19 @@ export function BusinessShell({ children }: { children: ReactNode }) {
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopHeader onToggleSidebar={sidebar.toggle} sidebarExpanded={sidebar.expanded} ready={ready} onLogout={onLogout} />
-        <main className="flex-1 p-2 sm:p-4">
+        {/* On phones the page leaves room for the bottom bar (and the phone's home indicator). */}
+        <main className="flex-1 p-2 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:p-4">
           {noLocations ? (
-            <EmptyState message="You are not assigned to any active location. Please contact your platform administrator." />
+            <EmptyState message="You have no active assigned location. A Super Admin must assign you to an active location or reactivate yours." />
           ) : (
             <div key={locationEpoch} className="mx-auto w-full max-w-7xl p-4 sm:p-6">
-              <BusinessSessionGate>{children}</BusinessSessionGate>
+              <InteractiveAfterHydration>
+                <BusinessSessionGate>{children}</BusinessSessionGate>
+              </InteractiveAfterHydration>
             </div>
           )}
         </main>
+        <MobileTabBar onLogout={onLogout} />
       </div>
     </div>
   );

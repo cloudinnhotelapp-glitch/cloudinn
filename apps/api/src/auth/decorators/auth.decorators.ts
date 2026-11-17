@@ -16,6 +16,14 @@ export const AllowPendingPasswordChange = () => SetMetadata(ALLOW_PENDING_PASSWO
 // Restricts a business-user route to the listed roles; the role is read from the database, never from the client.
 export const Roles = (...roles: BusinessRole[]) => SetMetadata(REQUIRED_ROLES, roles);
 
+// Lets a Staff session use the route too (the Staff app selects its session with the account-kind header); every other check still applies.
+export const ALLOW_STAFF = 'auth:allowStaff';
+export const AllowStaff = () => SetMetadata(ALLOW_STAFF, true);
+
+// Accepts only Staff sessions (the Staff app's own account routes); business-user sessions are refused.
+export const STAFF_ONLY = 'auth:staffOnly';
+export const StaffOnly = () => SetMetadata(STAFF_ONLY, true);
+
 // Requires a selected location that the user is still assigned to (checked by the guard on every request).
 export const RequireActiveLocation = () => SetMetadata(REQUIRE_ACTIVE_LOCATION, true);
 

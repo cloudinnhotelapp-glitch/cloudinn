@@ -32,7 +32,8 @@ export class BusinessDashboardService {
       this.prisma.room.count({ where: { ...scope, operationalStatus: 'OUT_OF_SERVICE' } }),
       this.prisma.reservation.count({ where: { ...scope, status: 'CONFIRMED', checkInDate: todayDate } }),
       this.prisma.reservation.count({ where: { ...scope, status: 'CHECKED_IN', checkOutDate: todayDate } }),
-      this.prisma.reservation.count({ where: { ...scope, status: { in: ['CONFIRMED', 'CHECKED_IN'] }, checkOutDate: { gt: todayDate } } }),
+      // Current reservations: confirmed ones not yet over, and every checked-in one (also an overdue guest still in house).
+      this.prisma.reservation.count({ where: { ...scope, OR: [{ status: 'CONFIRMED', checkOutDate: { gt: todayDate } }, { status: 'CHECKED_IN' }] } }),
       this.prisma.housekeepingTask.count({ where: { ...scope, status: { not: 'COMPLETED' } } }),
     ]);
 

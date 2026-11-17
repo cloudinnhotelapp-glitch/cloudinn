@@ -56,6 +56,23 @@ export interface LocationDetail {
   timezone: string;
   currencyCode: string;
   taxRatePercent: string;
+  /** Property settings (Phase 6.6). */
+  standardCheckInTime: string;
+  standardCheckOutTime: string;
+  requireIdDocumentUpload: boolean;
+  /** Link to the guest feedback form (https), used in WhatsApp feedback messages; null when not set. */
+  guestFeedbackUrl: string | null;
+  /** Area staff must be inside to mark attendance; all null when not set up. */
+  attendanceLatitude: string | null;
+  attendanceLongitude: string | null;
+  attendanceRadiusMeters: number | null;
+  attendanceEnabled: boolean;
+  attendanceShiftStart: string | null;
+  attendanceLateGraceMinutes: number;
+  attendanceCheckInFrom: string | null;
+  attendanceCheckInUntil: string | null;
+  attendanceCheckOutPolicy: 'INSIDE_AREA' | 'ANY_LOCATION';
+  attendancePhotoRetentionDays: number | null;
   status: LocationStatus;
   roomCount: number;
   assignedUserCount: number;

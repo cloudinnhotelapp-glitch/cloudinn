@@ -1,7 +1,7 @@
 // Request bodies for login and password change, validated before they reach any service.
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsIn, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
-import { BUSINESS_ROLES, type BusinessRole } from '@hms/shared';
+import { BUSINESS_ROLES, THEME_PREFERENCES, type BusinessRole, type ThemePreference } from '@hms/shared';
 import { PASSWORD_MAX_LENGTH } from '../password/password-policy.js';
 
 // Body of the Super Admin login request.
@@ -55,4 +55,11 @@ export class ChangePasswordDto {
   @IsString()
   @MaxLength(PASSWORD_MAX_LENGTH)
   newPassword!: string;
+}
+
+// Body of a theme change.
+export class SetThemeDto {
+  @ApiProperty({ enum: THEME_PREFERENCES })
+  @IsIn(THEME_PREFERENCES)
+  theme!: ThemePreference;
 }

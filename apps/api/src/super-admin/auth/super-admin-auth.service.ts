@@ -1,6 +1,6 @@
 // Super Admin login, session validation, logout, and password change; protects the platform console from unauthorized access.
 import { BadRequestException, ForbiddenException, Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
-import type { SuperAdminProfile } from '@hms/shared';
+import type { SuperAdminProfile, ThemePreference } from '@hms/shared';
 import type { SuperAdmin } from '../../generated/prisma/client.js';
 import { AuditLogService } from '../../audit-logs/audit-log.service.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
@@ -102,8 +102,14 @@ export class SuperAdminAuthService implements OnModuleInit {
       email: superAdmin.email,
       name: superAdmin.name,
       mustChangePassword: superAdmin.mustChangePassword,
+      theme: superAdmin.themePreference,
       sessionToken,
     };
+  }
+
+  // Saves the Super Admin's colour theme; a display preference that grants nothing.
+  async setTheme(auth: SuperAdminAuthContext, theme: ThemePreference): Promise<void> {
+    await this.prisma.superAdmin.update({ where: { id: auth.superAdminId }, data: { themePreference: theme } });
   }
 
   // Ends the current session so its cookie can no longer be used.
@@ -194,5 +200,5 @@ export class SuperAdminAuthService implements OnModuleInit {
 
 // Converts a database row into the public profile (never includes the password hash).
 function toProfile(admin: SuperAdmin): SuperAdminProfile {
-  return { id: admin.id, email: admin.email, name: admin.name, mustChangePassword: admin.mustChangePassword };
+  return { id: admin.id, email: admin.email, name: admin.name, mustChangePassword: admin.mustChangePassword, theme: admin.themePreference };
 }

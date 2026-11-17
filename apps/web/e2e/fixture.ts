@@ -15,6 +15,14 @@ export interface FixtureLocation {
   name: string;
 }
 
+// A business kept for one spec, with its rooms and a guest.
+export interface FixtureTenant {
+  businessId: string;
+  guestId: string;
+  users: Record<'ADMIN' | 'MANAGER' | 'RECEPTIONIST', FixtureUser>;
+  locations: (FixtureLocation & { roomIds: string[] })[];
+}
+
 // Everything the global setup created.
 export interface UiFixture {
   superAdmin: { email: string; password: string };
@@ -28,6 +36,24 @@ export interface UiFixture {
   };
   pending: { businessId: string; businessName: string; locations: FixtureLocation[] };
   pendingUser: FixtureUser;
+  branches: FixtureTenant;
+  closing: FixtureTenant;
+  solo: FixtureTenant;
+  calendar: FixtureTenant;
+  attendance: FixtureTenant;
+  attendanceErrors: FixtureTenant;
+  office: FixtureTenant;
+  favourites: FixtureTenant;
+  sweep: FixtureTenant;
+  staffPortal: FixtureTenant;
+  whatsapp: FixtureTenant;
+  availability: FixtureTenant;
+  propertyEdit: FixtureTenant;
+  roomShift: FixtureTenant;
+  /** A guest due to check out today and one overdue, both in house at the first location. */
+  departures: FixtureTenant & { guests: Record<'dueToday' | 'overdue', { roomNumber: string; guestName: string }> };
+  /** Room 101 needs cleaning after a checkout; a Staff member with a Staff app login works at the first location. */
+  housekeeping: FixtureTenant & { staff: { name: string; username: string; password: string } };
 }
 
 // Loads the fixture file named by HMS_UI_FIXTURE.

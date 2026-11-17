@@ -1,8 +1,17 @@
-// Old New business address (/super-admin/businesses/new). Creating a business now happens in a popup on the Businesses
-// page, so this address opens that page with the popup already showing (?add=1); existing links and bookmarks keep working.
-import { redirect } from 'next/navigation';
+// New business setup page (/super-admin/businesses/new, owner request 2026-11-16): a page instead of the popup, with
+// steps for the business details, locations, floors, room types, rooms, and business users.
+import { Suspense } from 'react';
+import { LoadingState } from '@/components/ui/states';
+import { BusinessSetupView } from '@/features/super-admin/business-setup-view';
+import { InteractiveAfterHydration } from '@/components/layout/interactive-after-hydration';
 
-// Sends the visitor to the Businesses page with the New business popup open.
+// Renders the page body inside Suspense, because it reads the business and step from the address.
 export default function NewBusinessPage() {
-  redirect('/super-admin/businesses?add=1');
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <InteractiveAfterHydration>
+        <BusinessSetupView />
+      </InteractiveAfterHydration>
+    </Suspense>
+  );
 }

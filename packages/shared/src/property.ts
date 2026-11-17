@@ -63,15 +63,54 @@ export interface RoomBoardRow {
   operationalStatus: RoomOperationalStatus;
   occupancyStatus: RoomOccupancyStatus;
   housekeepingStatus: RoomHousekeepingStatus;
-  /** Booking covering today (if any): guest and dates; empty until reservations exist (Phase 6). */
-  currentReservation: { reservationNumber: string; guestName: string; status: string; startDate: string; endDate: string } | null;
+  /** Booking covering today, or the guest in house (also an overdue one): guest and dates. */
+  currentReservation: {
+    reservationNumber: string;
+    guestName: string;
+    status: string;
+    startDate: string;
+    endDate: string;
+    /** Room Dashboard additions. */
+    reservationId: string;
+    reservationRoomId: string;
+    guestId: string;
+    checkInTime: string | null;
+    /** The reservation's expected departure time, or the property's standard check-out time. */
+    checkOutTime: string;
+    arrivingToday: boolean;
+    roomsInReservation: number;
+  } | null;
   /** Departure date of the booking covering today, if any. */
   expectedCheckOut: string | null;
+  /** The in-house stay of an occupied room (never ID details). */
+  stay: {
+    id: string;
+    grcNumber: string | null;
+    checkedInAt: string;
+    expectedCheckOutDate: string;
+    overdue: boolean;
+    adults: number;
+    children: number;
+    /** Extra beds in the room now (given at check-in plus added later), the most the room takes, and the price per bed and night. */
+    extraBeds: number;
+    maxExtraBeds: number;
+    extraBedRate: string;
+  } | null;
+  /** The reservation's estimated charges, payments so far, and what is outstanding (worked out by the server). */
+  money: { currencyCode: string; total: string; paid: string; outstanding: string } | null;
+  /** The open housekeeping task of a room that needs cleaning. */
+  housekeeping: { taskId: string; source: 'CHECKOUT' | 'MANUAL'; status: string; createdAt: string; notes: string | null; assignedStaffName: string | null } | null;
+  /** The room's own notes (for example why it is out of service). */
+  notes: string | null;
+  /** Whether a WhatsApp feedback message can be prepared for the guest in house, and why not. */
+  feedback: { available: boolean; reason: string | null } | null;
 }
 
 // The whole status board: the location's "today", the rows, and a count per board status.
 export interface RoomStatusBoard {
   date: string;
+  /** The location's time zone (Room Dashboard), for showing check-in times in hotel time. */
+  timezone: string;
   rows: RoomBoardRow[];
   counts: Record<RoomBoardStatus, number>;
 }

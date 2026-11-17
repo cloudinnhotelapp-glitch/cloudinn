@@ -1,4 +1,4 @@
-// Role-selection popup on /login (Admin, Manager, Receptionist — not a hotel picker), styled like the reference popup
+// Role-selection popup on /login (Admin, Manager, Receptionist, and Staff, which opens the staff sign-in — not a hotel picker), styled like the reference popup
 // ("How do you want to get paid?"): 24px-radius white card with a large shadow over a backdrop drawn like the sign-in brand panel (green gradient, dot texture, soft glows; the "role-popup" class in globals.css); header
 // with the 44px CloudInn logo, an extrabold title, and a short subtitle; option cards in a grid with a hint line. Per the
 // owner it has no close button and no footer (no system status or "Maybe later"); Escape still dismisses it and the
@@ -11,7 +11,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { CloudInnLogo } from '@/components/brand/cloudinn-brand';
 import { Icon } from '@/components/ui/icons';
 import { ROLE_OPTIONS, safeNextPath } from './business-roles';
-import { RoleCard } from './role-card';
+import { RoleCard, StaffCard } from './role-card';
 
 // Renders the popup (open when the page loads) and, behind it, a button that reopens it after Escape.
 export function RoleSelection() {
@@ -56,9 +56,9 @@ export function RoleSelection() {
           event.preventDefault();
           setOpen(false);
         }}
-        className="m-auto max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-3xl overflow-hidden rounded-[24px] border border-slate-100 bg-white p-0 text-slate-900 shadow-2xl outline-none role-popup"
+        className="m-auto max-h-[calc(100vh/var(--app-zoom,1)-2rem)] w-[calc(100%-2rem)] max-w-4xl overflow-hidden rounded-[24px] border border-slate-100 bg-white p-0 text-slate-900 shadow-2xl outline-none role-popup"
       >
-        <div className="flex max-h-[calc(100vh-2rem)] flex-col">
+        <div className="flex max-h-[calc(100vh/var(--app-zoom,1)-2rem)] flex-col">
           {/* Header (reference: px-6 pt-6 pb-4, bottom hairline), led by the CloudInn logo. */}
           <div className="relative shrink-0 border-b border-slate-100 px-6 pb-4 pt-6">
             <div className="flex items-start gap-3">
@@ -74,12 +74,15 @@ export function RoleSelection() {
 
           {/* Options (reference: p-6, cards in a grid, hint line below). */}
           <div className="ui-scroll min-h-0 flex-1 overflow-y-auto p-6">
-            <ul aria-label="Choose how you sign in" className="m-0 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-3">
+            <ul aria-label="Choose how you sign in" className="m-0 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-2 lg:grid-cols-4">
               {ROLE_OPTIONS.map((option) => (
                 <li key={option.slug}>
                   <RoleCard option={option} next={next} />
                 </li>
               ))}
+              <li>
+                <StaffCard />
+              </li>
             </ul>
             <p className="m-0 mt-5 text-center text-xs text-slate-400">Choose a role above to open its sign-in page. Your role is checked when you sign in.</p>
           </div>

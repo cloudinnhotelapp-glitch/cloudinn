@@ -36,6 +36,8 @@ export default defineConfig({
     channel: 'msedge',
     headless: true,
     trace: 'off',
+    // A simulated camera, so the attendance photo flow runs without a real device.
+    launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
   },
   webServer: [
     {
@@ -53,7 +55,16 @@ export default defineConfig({
         API_PORT: '4000',
         STORAGE_DRIVER: 'local',
         STORAGE_LOCAL_PATH: path.join(os.tmpdir(), 'cloudinn-e2e-storage'),
+        // WhatsApp advertisements go to the local stand-in below, never to Meta.
+        WHATSAPP_GRAPH_BASE_URL: 'http://127.0.0.1:4799/v23.0',
       },
+    },
+    {
+      // Local stand-in for Meta's WhatsApp Cloud API (e2e/fake-whatsapp-server.mjs).
+      command: 'node e2e/fake-whatsapp-server.mjs',
+      url: 'http://127.0.0.1:4799/health',
+      reuseExistingServer: false,
+      timeout: 30_000,
     },
     {
       // Built Next.js app; it proxies /api/v1 to the API above.

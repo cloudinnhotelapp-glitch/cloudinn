@@ -3,12 +3,13 @@ import { Global, Module } from '@nestjs/common';
 import { BusinessAuthController } from './business-auth.controller.js';
 import { BusinessAuthService } from './business-auth.service.js';
 import { BusinessSessionGuard } from './business-session.guard.js';
+import { StaffAuthController } from './staff-auth.controller.js';
 import { SessionSettingsService } from './session/session-settings.service.js';
 
 // Global so any later feature module can protect its routes with BusinessSessionGuard.
 @Global()
 @Module({
-  controllers: [BusinessAuthController],
+  controllers: [BusinessAuthController, StaffAuthController],
   providers: [SessionSettingsService, BusinessAuthService, BusinessSessionGuard],
   exports: [SessionSettingsService, BusinessAuthService, BusinessSessionGuard],
 })

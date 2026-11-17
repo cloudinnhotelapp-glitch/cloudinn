@@ -44,16 +44,21 @@ test.describe.serial('Guest ID documents', () => {
     await page.close();
   });
 
-  // Proves ID files chosen in the Add guest popup are uploaded right after the guest is created.
+  // Proves ID files chosen in the Add guest popup (opened from walk-in check-in) are uploaded right after the guest is created.
   test('attaches an ID file while adding a guest', async () => {
-    await page.goto('/guests');
-    await page.getByRole('button', { name: 'Add guest' }).click();
+    await page.goto('/check-in/walk-in');
+    await page.getByRole('button', { name: 'New guest' }).click();
     const popup = page.getByRole('dialog', { name: 'Add guest' });
     await popup.getByLabel('Full name').fill(guestName);
     await popup.getByLabel('ID type').selectOption('PASSPORT');
     await popup.getByLabel('ID number').fill(`R${runId}55`);
-    await popup.getByLabel('ID files (optional)').setInputFiles({ name: 'passport-front.png', mimeType: 'image/png', buffer: PNG });
+    await popup.getByLabel('ID files').setInputFiles({ name: 'passport-front.png', mimeType: 'image/png', buffer: PNG });
     await popup.getByRole('button', { name: 'Add guest' }).click();
+    await expect(popup).toBeHidden();
+    await page.goto('/guests');
+    await page.getByLabel('Search guests').fill(runId);
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByRole('link', { name: guestName }).click();
     await expect(page).toHaveURL(/\/guests\/[0-9a-f-]{36}$/);
     guestUrl = new URL(page.url()).pathname;
     const panel = page.getByRole('region', { name: 'ID documents' });

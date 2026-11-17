@@ -9,7 +9,7 @@ import { Icon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DeleteRecordDialog, type DeleteTarget } from '@/components/ui/delete-record';
-import { RowActions } from '@/components/ui/row-actions';
+import { RowActions, RowEditButton, type RowAction } from '@/components/ui/row-actions';
 import { Field, inputClass } from '@/components/ui/fields';
 import { useNotify } from '@/components/ui/notifications';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -22,6 +22,10 @@ import { apiRequest, FormValidationError } from '@/lib/api-client';
 export interface PropertyManagerProps {
   apiBase: string;
   canManage: boolean;
+  /** Whether Delete is offered (defaults to canManage; business users edit but do not delete). */
+  canDelete?: boolean;
+  /** Shows Edit as its own pencil button on each row instead of in the row menu (business Property Setup). */
+  editButton?: boolean;
 }
 
 // Text a floor is searched by.
@@ -31,7 +35,7 @@ const floorText = (floor: FloorDetail) => floor.name;
 type Editing = { floor: FloorDetail | null } | null;
 
 // Loads the floors and renders the table plus the add/edit and status dialogs.
-export function FloorsManager({ apiBase, canManage }: PropertyManagerProps) {
+export function FloorsManager({ apiBase, canManage, canDelete = canManage, editButton = false }: PropertyManagerProps) {
   const notify = useNotify();
   const { data, error, loading, reload } = useApiQuery<FloorDetail[]>(`${apiBase}/floors`);
   const filters = useListFilter(data, floorText);
@@ -111,28 +115,38 @@ export function FloorsManager({ apiBase, canManage }: PropertyManagerProps) {
                   </td>
                   {canManage && (
                     <td className="text-right">
-                      <RowActions
-                        label={`Actions for floor ${floor.name}`}
-                        actions={[
-                          { label: 'Edit floor', icon: 'edit', tone: 'emerald', onSelect: () => openEditor(floor) },
-                          floor.isActive
-                            ? { label: 'Deactivate floor', icon: 'toggleOff', tone: 'amber', onSelect: () => setToggling(floor) }
-                            : { label: 'Activate floor', icon: 'toggleOn', tone: 'emerald', onSelect: () => setToggling(floor) },
-                          {
-                            label: 'Delete floor',
-                            icon: 'trash',
-                            tone: 'red',
-                            onSelect: () =>
-                              setDeleting({
-                                kind: 'floor',
-                                name: floor.name,
-                                details: [`Display order ${floor.sortOrder}`, `${floor.roomCount} room${floor.roomCount === 1 ? '' : 's'}`, floor.isActive ? 'Active' : 'Inactive'],
-                                checkPath: `${apiBase}/floors/${floor.id}/deletion-check`,
-                                deletePath: `${apiBase}/floors/${floor.id}`,
-                              }),
-                          },
-                        ]}
-                      />
+                      <div className="inline-flex items-center gap-1.5">
+                        {editButton && <RowEditButton label={`Edit floor ${floor.name}`} onClick={() => openEditor(floor)} />}
+                        <RowActions
+                          label={`Actions for floor ${floor.name}`}
+                          actions={[
+                            // Shown as its own pencil button on the business Property Setup page.
+                            ...(editButton
+                              ? []
+                              : ([{ label: 'Edit floor', icon: 'edit', tone: 'emerald', onSelect: () => openEditor(floor) }] satisfies RowAction[])),
+                            floor.isActive
+                              ? { label: 'Deactivate floor', icon: 'toggleOff', tone: 'amber', onSelect: () => setToggling(floor) }
+                              : { label: 'Activate floor', icon: 'toggleOn', tone: 'emerald', onSelect: () => setToggling(floor) },
+                            ...(canDelete
+                              ? ([
+                                {
+                                  label: 'Delete floor',
+                                  icon: 'trash',
+                                  tone: 'red',
+                                  onSelect: () =>
+                                    setDeleting({
+                                      kind: 'floor',
+                                      name: floor.name,
+                                      details: [`Display order ${floor.sortOrder}`, `${floor.roomCount} room${floor.roomCount === 1 ? '' : 's'}`, floor.isActive ? 'Active' : 'Inactive'],
+                                      checkPath: `${apiBase}/floors/${floor.id}/deletion-check`,
+                                      deletePath: `${apiBase}/floors/${floor.id}`,
+                                    }),
+                                },
+                                ] satisfies RowAction[])
+                              : []),
+                          ]}
+                        />
+                        </div>
                     </td>
                   )}
                 </tr>
@@ -171,7 +185,7 @@ export function FloorsManager({ apiBase, canManage }: PropertyManagerProps) {
           reload();
         }}
       />
-      {canManage && <DeleteRecordDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={reload} />}
+      {canDelete && <DeleteRecordDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={reload} />}
     </section>
   );
 }

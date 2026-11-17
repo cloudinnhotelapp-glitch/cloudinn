@@ -132,7 +132,7 @@ The two sides never accept each other's sessions.
 - **First pages after login:**
   - `/change-password` while a temporary password is active;
   - `/select-location` when the user has several locations and none is selected.
-- **Main pages:** `/dashboard` and `/room-status` for every role. `/floors`, `/room-types`, and `/rooms` are for Admins.
+- **Main pages:** `/dashboard` (it opens with the room board; the old `/room-status` address redirects to it) for every role. Property Setup (`/property/floors`, `/property/room-types`, `/property/rooms`: one menu item with three tabs, read-only) for every role; the old `/floors`, `/room-types`, and `/rooms` addresses redirect to their tab.
 - **Location switching:** from the top bar. The page reloads its data for the new location; the role never changes.
 - **Session checks:**
   - `proxy.ts` redirects pages to `/login` when the `hms_session` cookie is missing.
@@ -245,4 +245,21 @@ Every access is audit-logged. File contents never go in PostgreSQL.
 |---|---|
 | Mandatory 2FA for Super Admin | Not in Version 1; the design allows adding TOTP later |
 | Business login at "domain.com" | Single domain; `/` redirects unauthenticated users to `/login` |
-| Group reservations, WhatsApp, refunds, expenses/payouts, reports, subscription plans | Deferred to Version 2 (see `roadmap.md`) |
+| Group reservations, WhatsApp, refunds, expenses/payouts, reports, subscription plans | Deferred to Version 2 (see `roadmap.md`), except where the owner later approved them: group reservations, the WhatsApp feedback link, and sending advertisements on WhatsApp (2026-11-11, see §11) |
+
+## 11. Advertisements on WhatsApp (owner decision 2026-11-11)
+
+- **Who and to whom:** Admins, Managers, and Receptionists (`ads.send`) send an advertisement to the business's guests who agreed to receive offers on WhatsApp.
+  - The agreement is a guest field, off by default and recorded with its time.
+  - Only guests with an international phone number are reached, with one message per number. The others are counted as left out.
+- **How it is sent:** through the business's own WhatsApp Business Platform account (Meta Cloud API).
+  - The Super Admin enters only its phone number ID and an access token on the business page; there is no template to choose.
+  - Every ad goes out as CloudInn's one fixed template, `cloudinn_ad` (English, `en`), which each business creates once in WhatsApp Manager: Marketing, an Image header, and the body `Hello {{1}}, {{2}}: {{3}}`.
+  - CloudInn fills it with the ad's own uploaded picture, the guest's name, the title, and the description and link.
+  - A plain picture message is not used: Meta accepts it but only delivers it to guests who wrote in the last 24 hours, without telling CloudInn.
+- **Token:** stored encrypted (AES-256-GCM, key derived from `SESSION_SECRET` with HKDF), never returned, and never logged or audited.
+- **Sending:** the server records the send and every recipient, uploads the image once, then sends one message at a time in the background.
+  - Each outcome (sent, with Meta's message ID, or failed, with Meta's reason) is stored.
+  - Unfinished sends resume after a restart. One send per business runs at a time, enforced with a row lock.
+  - The page shows the progress.
+- **Not in this version:** delivery or read receipts (they need a Meta webhook), opt-out by guest reply, and per-location sender numbers.

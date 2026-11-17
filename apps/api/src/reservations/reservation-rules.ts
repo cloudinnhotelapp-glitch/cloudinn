@@ -104,3 +104,10 @@ export function timeValue(hhmm: string | null | undefined): Date | null | undefi
 export function formatTime(value: Date | null): string | null {
   return value ? value.toISOString().slice(11, 16) : null;
 }
+
+// The rooms that count for the money of a reservation: released (cancelled) and no-show rooms of a partly used
+// reservation are left out. A fully cancelled reservation keeps all its rooms, so its estimate still shows what was booked.
+export function billableRooms<T extends { status?: string }>(rooms: T[]): T[] {
+  const kept = rooms.filter((room) => room.status !== 'CANCELLED' && room.status !== 'NO_SHOW');
+  return kept.length > 0 ? kept : rooms;
+}

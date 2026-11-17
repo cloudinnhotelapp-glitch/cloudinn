@@ -1,29 +1,29 @@
-// Business list for the Super Admin: search, status filter, pagination, the "New business" popup (also opened by ?add=1),
-// and Delete (archive).
+// Business list for the Super Admin: search, status filter, pagination, the "New business" button (it opens the setup page
+// /super-admin/businesses/new, owner request 2026-11-16; old ?add=1 links open it too), and Delete (archive).
 'use client';
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import type { BusinessSummary, Paginated } from '@hms/shared';
 import { Icon } from '@/components/ui/icons';
 import { DeleteRecordDialog, type DeleteTarget } from '@/components/ui/delete-record';
 import { RowActions } from '@/components/ui/row-actions';
 import { compactInputClass, searchInputClass } from '@/components/ui/fields';
-import { useNotify } from '@/components/ui/notifications';
 import { Pagination } from '@/components/ui/pagination';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { useApiQuery } from '@/hooks/use-api-query';
 import { formatDateTime } from '@/lib/format';
-import { AddBusinessDialog } from './add-business-dialog';
 
 // Loads and shows one page of businesses with the chosen filters.
 export function BusinessListView() {
   const router = useRouter();
-  const notify = useNotify();
-  // The popup opens straight away when the page is reached with ?add=1 (dashboard quick action, old /new address).
-  const [adding, setAdding] = useState(useSearchParams().get('add') === '1');
+  // New business is a page of its own now (owner request 2026-11-16); old links with ?add=1 open it.
+  const addRequested = useSearchParams().get('add') === '1';
+  useEffect(() => {
+    if (addRequested) router.replace('/super-admin/businesses/new');
+  }, [addRequested, router]);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -49,14 +49,13 @@ export function BusinessListView() {
     <section className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="ui-page-title">Businesses</h1>
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-2 rounded-xl border-0 bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-600"
+        <Link
+          href="/super-admin/businesses/new"
+          className="inline-flex items-center gap-2 rounded-xl border-0 bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white no-underline transition-colors hover:bg-brand-600"
         >
           <Icon name="plus" className="h-5 w-5" />
           New business
-        </button>
+        </Link>
       </div>
 
       <div className="ui-list-panel">
@@ -154,15 +153,6 @@ export function BusinessListView() {
             }} />}
       </div>
       <DeleteRecordDialog target={deleting} onClose={() => setDeleting(null)} onDeleted={reload} />
-      <AddBusinessDialog
-        open={adding}
-        onClose={() => setAdding(false)}
-        onCreated={(created) => {
-          setAdding(false);
-          notify(`Business "${created.name}" created.`);
-          router.push(`/super-admin/businesses/${created.id}`);
-        }}
-      />
     </section>
   );
 }

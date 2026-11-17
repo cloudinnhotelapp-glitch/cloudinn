@@ -4,6 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { fixture } from './fixture';
+import { openPropertyTab } from './property-tabs';
 import { rowAction } from './helpers';
 
 // Short unique text for records created in this run.
@@ -151,7 +152,7 @@ test.describe.serial('Super Admin Property Setup', () => {
   });
 
   // Proves the business Admin sees the records the Super Admin created, read-only, and the board shows the room's status.
-  test('shows the new records read-only to the business Admin', async ({ browser }, testInfo) => {
+  test('shows the new records to the business Admin, editable but not deletable', async ({ browser }, testInfo) => {
     const { hotel } = fixture();
     const admin = hotel.users.ADMIN;
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -164,21 +165,26 @@ test.describe.serial('Super Admin Property Setup', () => {
     await expect(business).toHaveURL(/\/dashboard$/);
 
     const nav = business.getByRole('navigation', { name: 'Main' });
-    await nav.getByRole('link', { name: 'Floors', exact: true }).click();
+    await openPropertyTab(business, 'Floors');
     await business.locator('#floors-search').fill(runId);
     await expect(business.getByRole('cell', { name: floorName, exact: true })).toBeVisible();
-    await expect(business.getByRole('button', { name: `Actions for floor ${floorName}` })).toHaveCount(0);
+    // Business users edit with the row's pencil (owner decision 2026-11-12) and are never offered Delete.
+    await expect(business.getByRole('button', { name: `Edit floor ${floorName}` })).toBeVisible();
+    await business.getByRole('button', { name: `Actions for floor ${floorName}` }).click();
+    await expect(business.getByRole('menu', { name: `Actions for floor ${floorName}` }).getByRole('menuitem', { name: 'Delete floor' })).toHaveCount(0);
+    await business.keyboard.press('Escape');
 
-    await nav.getByRole('link', { name: 'Rooms', exact: true }).click();
+    await openPropertyTab(business, 'Rooms');
     await business.locator('#rooms-search').fill(roomNumber);
     await expect(business.getByRole('row', { name: new RegExp(roomNumber) })).toContainText('Out of service');
+    await expect(business.getByRole('button', { name: `Edit room ${roomNumber}` })).toBeVisible();
     await expect(business.getByRole('button', { name: `Actions for room ${roomNumber}` })).toHaveCount(0);
-    await business.screenshot({ path: testInfo.outputPath('business-rooms-readonly.png'), fullPage: true });
+    await business.screenshot({ path: testInfo.outputPath('business-rooms-editable.png'), fullPage: true });
 
-    await nav.getByRole('link', { name: 'Room Status', exact: true }).click();
-    await expect(business.getByTestId(`room-tile-${roomNumber}`)).toContainText('Out of service');
+    await nav.getByRole('link', { name: 'Dashboard', exact: true }).click();
+    await expect(business.getByTestId(`room-tile-${roomNumber}`).filter({ visible: true })).toContainText('Out of service');
     // Business users have no Delete action anywhere on the read-only pages.
-    await nav.getByRole('link', { name: 'Floors', exact: true }).click();
+    await openPropertyTab(business, 'Floors');
     await expect(business.getByRole('button', { name: /^Delete / })).toHaveCount(0);
     await context.close();
   });

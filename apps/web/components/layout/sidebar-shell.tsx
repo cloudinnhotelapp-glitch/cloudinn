@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState, type FocusEvent, type MouseEvent } from 'react';
+import { zoomFactor } from '@/lib/zoom';
 import { CloudInnLogo, CloudInnWordmark } from '@/components/brand/cloudinn-brand';
 import { Icon, type IconName } from '@/components/ui/icons';
 
@@ -20,6 +21,8 @@ export interface ShellNavItem {
   /** False for modules that do not exist yet: shown disabled with a "Soon" badge. */
   available: boolean;
   active: boolean;
+  /** Sub-menu entries: shown under the item, which then opens and closes them instead of being a link. */
+  children?: ShellNavItem[];
 }
 
 // A titled group of entries.
@@ -37,6 +40,8 @@ export interface SidebarShellProps {
   productSubtitle?: string;
   groups: ShellNavGroup[];
   accountItems: ShellNavItem[];
+  /** Light/Dark switch shown above the account links; left out where the app has no theme choice. */
+  themeToggle?: { dark: boolean; onToggle: () => void };
   showNav: boolean;
   hint?: string;
   user: { initials: string; name: string; subtitle: string };
@@ -75,9 +80,9 @@ function tipHandlers(collapsed: boolean, label: string, onTip?: TipHandler) {
   };
 }
 
-// One navigation entry: a link with the active page highlighted, or a disabled "Soon" entry.
-export function SidebarNavItem({ item, collapsed, onTip }: { item: ShellNavItem; collapsed: boolean; onTip?: TipHandler }) {
-  const spacing = collapsed ? 'justify-center px-0' : 'px-4';
+// One navigation entry: a link with the active page highlighted, or a disabled "Soon" entry (less padding inside a sub-menu).
+export function SidebarNavItem({ item, collapsed, nested = false, onTip }: { item: ShellNavItem; collapsed: boolean; nested?: boolean; onTip?: TipHandler }) {
+  const spacing = collapsed ? 'justify-center px-0' : nested ? 'px-3' : 'px-4';
   if (!item.available) {
     return (
       <span
@@ -107,6 +112,40 @@ export function SidebarNavItem({ item, collapsed, onTip }: { item: ShellNavItem;
   );
 }
 
+// A main menu with sub-menus: a button that opens or closes the list of sub-menu links (open while one of them is the
+// current page). On the collapsed rail the sub-menu links are shown directly as icons.
+function SidebarNavMenu({ item, collapsed, onTip }: { item: ShellNavItem; collapsed: boolean; onTip?: TipHandler }) {
+  const [choice, setChoice] = useState<boolean | null>(null);
+  const open = choice ?? item.active;
+  const children = item.children ?? [];
+  if (collapsed) return <>{children.map((child) => <SidebarNavItem key={child.href} item={child} collapsed onTip={onTip} />)}</>;
+  const listId = `submenu-${item.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setChoice(!open)}
+        className={`${ITEM} w-full border-none bg-transparent px-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+          item.active ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-700 hover:bg-emerald-100/40 hover:text-slate-900 dark:text-slate-300'
+        }`}
+      >
+        <Icon name={item.icon} filled={item.active} className="h-[18px] w-[18px]" />
+        <span className="flex-1 truncate whitespace-nowrap text-[13px]">{item.label}</span>
+        <Icon name="chevronDown" className={`h-[18px] w-[18px] transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div id={listId} className="ml-[22px] flex flex-col gap-0.5 border-l border-shell-line pl-1.5">
+          {children.map((child) => (
+            <SidebarNavItem key={child.href} item={child} collapsed={false} nested onTip={onTip} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Group heading (reference: px-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1); a thin divider on the
 // collapsed rail so groups stay visually separated.
 function GroupTitle({ title, collapsed }: { title: string; collapsed: boolean }) {
@@ -116,7 +155,7 @@ function GroupTitle({ title, collapsed }: { title: string; collapsed: boolean })
 
 // Renders the sidebar with brand, grouped navigation, and the footer with account links and logout.
 export function SidebarShell(props: SidebarShellProps) {
-  const { id, navLabel, homeHref, productSubtitle, groups, accountItems, showNav, hint, user, collapsed, isDesktop, mobileOpen, onCloseMobile, onToggle, onLogout, loggingOut } =
+  const { id, navLabel, homeHref, productSubtitle, groups, accountItems, themeToggle, showNav, hint, user, collapsed, isDesktop, mobileOpen, onCloseMobile, onToggle, onLogout, loggingOut } =
     props;
   const narrow = collapsed && isDesktop;
   const hiddenDrawer = !isDesktop && !mobileOpen;
@@ -125,8 +164,10 @@ export function SidebarShell(props: SidebarShellProps) {
   // Positions the tooltip beside the hovered or focused entry (only on the collapsed rail).
   const onTip = useCallback<TipHandler>((label, target) => {
     if (!label || !target) return setTip(null);
+    // Screen coordinates are not zoomed but CSS lengths are, so they are divided by the header's zoom level.
     const rect = target.getBoundingClientRect();
-    setTip({ label, top: rect.top + rect.height / 2, left: rect.right + 12 });
+    const zoom = zoomFactor();
+    setTip({ label, top: (rect.top + rect.height / 2) / zoom, left: (rect.right + 12) / zoom });
   }, []);
 
   // Closes the mobile drawer with the Escape key.
@@ -151,7 +192,7 @@ export function SidebarShell(props: SidebarShellProps) {
         id={id}
         aria-label="Sidebar"
         inert={hiddenDrawer || undefined}
-        className={`fixed inset-y-0 left-0 z-40 border-r border-shell-line bg-shell transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 dark:border-slate-800 dark:bg-slate-950 ${
+        className={`fixed inset-y-0 left-0 z-40 border-r border-shell-line bg-shell transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none lg:sticky lg:top-0 lg:h-[calc(100vh/var(--app-zoom,1))] lg:translate-x-0 dark:border-slate-800 dark:bg-slate-950 ${
           narrow ? 'w-[72px]' : 'w-[240px]'
         } ${hiddenDrawer ? '-translate-x-full' : 'translate-x-0'}`}
       >
@@ -169,16 +210,20 @@ export function SidebarShell(props: SidebarShellProps) {
             )}
           </div>
 
-          {/* Menu (reference: px-4 py-6, 32px between groups, 4px between items). */}
-          <div className="sidebar-scroll flex-1 overflow-y-auto overflow-x-hidden px-4 py-6">
+          {/* Menu: compact spacing (owner request 2026-11-11 "remove extra spacing"): 16px between groups, 2px between items. */}
+          <div className="sidebar-scroll flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">
             {showNav ? (
-              <nav aria-label={navLabel} className="flex flex-col gap-8">
+              <nav aria-label={navLabel} className="flex flex-col gap-4">
                 {groups.map((group) => (
-                  <div key={group.title} className="flex flex-col gap-1">
+                  <div key={group.title} className="flex flex-col gap-0.5">
                     <GroupTitle title={group.title} collapsed={narrow} />
-                    {group.items.map((item) => (
-                      <SidebarNavItem key={item.href} item={item} collapsed={narrow} onTip={onTip} />
-                    ))}
+                    {group.items.map((item) =>
+                      item.children ? (
+                        <SidebarNavMenu key={item.href} item={item} collapsed={narrow} onTip={onTip} />
+                      ) : (
+                        <SidebarNavItem key={item.href} item={item} collapsed={narrow} onTip={onTip} />
+                      ),
+                    )}
                   </div>
                 ))}
               </nav>
@@ -189,6 +234,17 @@ export function SidebarShell(props: SidebarShellProps) {
 
           {/* Footer (reference: px-4 py-4 border-t border-[#e2f2e9], items with 4px gaps): account links and logout. */}
           <div className={`flex shrink-0 flex-col gap-1 border-t border-shell-line py-4 ${narrow ? 'px-2' : 'px-4'}`}>
+            {themeToggle && (
+              <button
+                type="button"
+                onClick={themeToggle.onToggle}
+                {...tipHandlers(narrow, themeToggle.dark ? 'Light theme' : 'Dark theme', onTip)}
+                className={`${ITEM} ${narrow ? 'justify-center px-0' : 'px-4'} w-full border-none bg-transparent text-left text-slate-700 hover:bg-emerald-100/40 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white`}
+              >
+                <Icon name={themeToggle.dark ? 'lightMode' : 'darkMode'} className="h-[18px] w-[18px]" />
+                <span className={narrow ? 'sr-only' : 'truncate text-[13px]'}>{themeToggle.dark ? 'Light theme' : 'Dark theme'}</span>
+              </button>
+            )}
             {accountItems.map((item) => (
               <SidebarNavItem key={item.href} item={item} collapsed={narrow} onTip={onTip} />
             ))}

@@ -12,7 +12,7 @@ import { useSuperAdminSession } from './super-admin-session';
 
 // Shortcuts to the most common console tasks.
 const QUICK_ACTIONS: { href: string; label: string; icon: IconName }[] = [
-  { href: '/super-admin/businesses?add=1', label: 'Create business', icon: 'building' },
+  { href: '/super-admin/businesses/new', label: 'Create business', icon: 'building' },
   { href: '/super-admin/business-users?add=1', label: 'Add business user', icon: 'users' },
   { href: '/super-admin/locations', label: 'View locations', icon: 'mapPin' },
   { href: '/super-admin/audit-logs', label: 'Review audit trail', icon: 'clipboard' },
@@ -71,7 +71,7 @@ export function DashboardView() {
       {error ? <ErrorState error={error} onRetry={reload} /> : null}
       {loading && !data ? <LoadingState /> : null}
       {data && (
-        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Platform summary">
+        <dl className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3" aria-label="Platform summary">
           <SummaryCard label="Total businesses" value={data.businesses.total} icon="building" tone="blue" detail="All tenants on the platform" href="/super-admin/businesses" />
           <SummaryCard label="Active businesses" value={data.businesses.active} icon="checkCircle" tone="green" detail="Can sign in and operate" href="/super-admin/businesses" />
           <SummaryCard label="Suspended businesses" value={data.businesses.suspended} icon="alertTriangle" tone="rose" detail="Sign-in blocked, data kept" href="/super-admin/businesses" />
@@ -80,7 +80,7 @@ export function DashboardView() {
           <SummaryCard label="Business users" value={data.businessUsers.total} icon="users" tone="indigo" detail={`${data.businessUsers.active} active`} href="/super-admin/business-users" />
         </dl>
       )}
-      <div className="grid items-start gap-6 xl:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
         <div className="xl:col-span-2">
           <RecentActivity />
         </div>

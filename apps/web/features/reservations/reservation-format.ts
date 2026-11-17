@@ -44,3 +44,31 @@ export function advanceBadge(status: AdvanceStatus): { status: string; label: st
   const key = { NONE: 'NO_ADVANCE', PARTIAL: 'PARTIALLY_PAID', COVERED: 'PAID' }[status];
   return { status: key, label: ADVANCE_STATUS_LABELS[status] };
 }
+
+// Today's date ("YYYY-MM-DD") at the hotel, in the location's own time zone; never the browser's time zone. Falls back
+// to UTC when the time zone is unknown (the server checks every date against the hotel's date again).
+export function hotelToday(timeZone: string | undefined, now: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: timeZone ?? 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
+}
+
+// "7 Nov 2026, 14:05" for an instant, shown in the hotel's own time zone (never the browser's).
+export function formatDateTimeIn(iso: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', { timeZone, day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+  } catch {
+    return new Date(iso).toISOString().replace('T', ' ').slice(0, 16);
+  }
+}
+
+// The current time ("HH:mm") in the hotel's time zone, for display only (the server records the real check-in time).
+export function hotelTime(timeZone: string | undefined, now: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', { timeZone: timeZone ?? 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
+  } catch {
+    return now.toISOString().slice(11, 16);
+  }
+}

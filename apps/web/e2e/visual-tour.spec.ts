@@ -79,11 +79,13 @@ test.describe('Visual tour', () => {
     const out = (name: string) => testInfo.outputPath(name);
     const pages: [string, string, string][] = [
       ['/dashboard', 'biz-dashboard', 'Dashboard'],
-      ['/room-status', 'biz-room-status', 'Room Status'],
-      ['/floors', 'biz-floors', 'Floors'],
-      ['/room-types', 'biz-room-types', 'Room Types'],
-      ['/rooms', 'biz-rooms', 'Rooms'],
+      ['/property/floors', 'biz-floors', 'Property Setup'],
+      ['/property/room-types', 'biz-room-types', 'Property Setup'],
+      ['/property/rooms', 'biz-rooms', 'Property Setup'],
+      ['/availability', 'biz-availability', 'Room Availability'],
+      ['/availability/calendar', 'biz-calendar', 'Calendar'],
       ['/change-password', 'biz-change-password', 'Change Password'],
+      ['/settings', 'biz-settings', 'Settings'],
     ];
     for (const [path, name, title] of pages) {
       await page.goto(path);
@@ -92,7 +94,7 @@ test.describe('Visual tour', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/dashboard');
     await capture(page, 'biz-dashboard-mobile', 'Dashboard', out);
-    await page.goto('/rooms');
-    await capture(page, 'biz-rooms-mobile', 'Rooms', out);
+    await page.goto('/property/rooms');
+    await capture(page, 'biz-rooms-mobile', 'Property Setup', out);
   });
 });

@@ -17,7 +17,8 @@ const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  // Camera and location are allowed for CloudInn's own pages only, for attendance.
+  { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=(self)' },
 ];
 
 // Main Next.js settings object.
@@ -39,6 +40,21 @@ const nextConfig: NextConfig = {
   // Same-origin proxy so session cookies stay first-party and no API URL is exposed to the browser.
   async rewrites() {
     return [{ source: '/api/v1/:path*', destination: `${apiInternalUrl}/api/v1/:path*` }];
+  },
+
+  // Old addresses that moved (Room Status is its own page again since 2026-11-12, so it is no longer redirected).
+  async redirects() {
+    return [
+      // Floors, room types, and rooms are tabs of one Property Setup page; it opens on Rooms, and the old addresses open their tab.
+      { source: '/property', destination: '/property/rooms', permanent: false },
+      { source: '/floors', destination: '/property/floors', permanent: false },
+      { source: '/room-types', destination: '/property/room-types', permanent: false },
+      { source: '/rooms', destination: '/property/rooms', permanent: false },
+      // The Calendar is a tab of Room Availability (owner decision 2026-11-11); old links open that tab.
+      { source: '/calendar', destination: '/availability/calendar', permanent: false },
+      // The Staff sign-in is /login/staff, next to the other role sign-ins (owner request 2026-11-12).
+      { source: '/staff/login', destination: '/login/staff', permanent: false },
+    ];
   },
 
   // Applies the security headers to all routes.

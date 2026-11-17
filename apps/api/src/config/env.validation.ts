@@ -56,6 +56,10 @@ export const envSchema = z
     S3_ACCESS_KEY_ID: optionalText,
     S3_SECRET_ACCESS_KEY: optionalText,
     S3_PRESIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+
+    // WhatsApp Business Platform (Meta Cloud API) address, with its version. Each business's own number, template, and
+    // access token are entered by the Super Admin (stored encrypted), not here. Tests point this at a local stand-in.
+    WHATSAPP_GRAPH_BASE_URL: z.preprocess(blankToUndefined, z.url().default('https://graph.facebook.com/v23.0')),
   })
   // S3 credentials are only required (and must be real) when the S3 driver is selected.
   .superRefine((env, ctx) => {

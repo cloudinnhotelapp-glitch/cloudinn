@@ -1,5 +1,5 @@
 // HTTP endpoints for business-user login (with role selection), logout, session details, and password change (under /api/v1/auth).
-import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
@@ -9,7 +9,7 @@ import type { BusinessAuthContext } from './auth-context.js';
 import { BusinessAuthService } from './business-auth.service.js';
 import { BusinessSessionGuard } from './business-session.guard.js';
 import { CurrentBusinessUser } from './decorators/auth.decorators.js';
-import { BusinessLoginDto, ChangePasswordDto, SelectLocationDto } from './dto/auth.dto.js';
+import { BusinessLoginDto, ChangePasswordDto, SelectLocationDto, SetThemeDto } from './dto/auth.dto.js';
 import { clearSessionCookies, setSessionCookies } from './session/session-cookies.js';
 import { SessionSettingsService } from './session/session-settings.service.js';
 import { deriveCsrfToken } from './session/session-tokens.js';
@@ -59,6 +59,16 @@ export class BusinessAuthController {
     @Req() req: Request,
   ): Promise<BusinessSessionInfo> {
     return this.authService.selectLocation(auth, body.locationId, getClientMeta(req));
+  }
+
+  // Saves the signed-in user's colour theme (requires the CSRF header).
+  @Put('theme')
+  @HttpCode(204)
+  @UseGuards(BusinessSessionGuard)
+  @ApiCookieAuth(SESSION_COOKIES.businessUser.session)
+  @ApiOperation({ summary: 'Save the colour theme of the current user' })
+  async setTheme(@CurrentBusinessUser() auth: BusinessAuthContext, @Body() body: SetThemeDto): Promise<void> {
+    await this.authService.setTheme(auth, body.theme);
   }
 
   // Ends the current session and clears the cookies (requires the CSRF header).

@@ -8,6 +8,7 @@ import { Icon } from '@/components/ui/icons';
 import { useNotify } from '@/components/ui/notifications';
 import { errorMessages } from '@/lib/api-client';
 import { useBusinessSession } from '../business-session';
+import { CheckoutAlerts } from './checkout-alerts';
 import { pageTitle } from './nav-config';
 import { UserMenu } from './user-menu';
 
@@ -49,6 +50,8 @@ export function TopHeader({ onToggleSidebar, sidebarExpanded, ready, onLogout }:
       title={pageTitle(pathname)}
       subtitle={info?.business.name ?? 'Checking your session…'}
     >
+      {/* Rooms due to check out today, on every page (owner request 2026-11-16). */}
+      {ready && <CheckoutAlerts />}
       {ready && locations.length > 1 && (
         <div className="relative">
           <Icon name="mapPin" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -57,7 +60,7 @@ export function TopHeader({ onToggleSidebar, sidebarExpanded, ready, onLogout }:
           </label>
           <select
             id="location-switcher"
-            className="max-w-[9.5rem] rounded-full border border-shell-line bg-white py-2 pl-9 pr-8 text-sm font-semibold text-slate-800 outline-none transition-colors focus:border-emerald-500 disabled:opacity-60 sm:max-w-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            className="max-w-[9.5rem] rounded-full border border-shell-line bg-white py-2 pl-9 pr-8 text-sm font-semibold text-slate-800 outline-none transition-colors focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30 disabled:opacity-60 sm:max-w-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             value={info?.activeLocationId ?? ''}
             disabled={switching}
             onChange={(e) => void onSwitch(e.target.value)}
@@ -76,7 +79,10 @@ export function TopHeader({ onToggleSidebar, sidebarExpanded, ready, onLogout }:
           {activeLocation.name}
         </span>
       )}
-      <UserMenu onLogout={onLogout} />
+      {/* On phones the profile menu is the Account entry of the bottom bar (owner request 2026-11-16). */}
+      <div className="hidden sm:block">
+        <UserMenu onLogout={onLogout} />
+      </div>
     </HeaderBar>
   );
 }

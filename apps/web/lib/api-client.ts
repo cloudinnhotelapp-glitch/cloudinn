@@ -1,6 +1,6 @@
 // Typed helper for calling the NestJS API through the same-origin /api/v1 proxy.
 // Session cookies travel automatically; the CSRF header is added to every state-changing request.
-import { API_BASE_PATH, CSRF_HEADER_NAME, SESSION_COOKIES } from '@hms/shared';
+import { ACCOUNT_KIND_HEADER, ACTIVE_LOCATION_HEADER, API_BASE_PATH, CSRF_HEADER_NAME, SESSION_COOKIES } from '@hms/shared';
 import { readCookie } from './cookies';
 
 // Error thrown when the API answers with a non-success status; messages come from the API's standard error body.
@@ -39,9 +39,46 @@ export function setUnauthorizedHandler(handler: (path: string) => void): () => v
   };
 }
 
+// The location the open business page was built for, and the function to call when the server reports a different one.
+let expectedLocation: string | undefined;
+let locationChangedHandler: (() => void) | null = null;
+
+// Records the location the page is showing; undefined turns the stale-page check off (Super Admin pages, or mid-switch).
+export function setExpectedLocation(locationId: string | undefined): void {
+  expectedLocation = locationId;
+}
+
+// Registers the location-changed handler and returns a function that removes it.
+export function setLocationChangedHandler(handler: () => void): () => void {
+  locationChangedHandler = handler;
+  return () => {
+    if (locationChangedHandler === handler) locationChangedHandler = null;
+  };
+}
+
+// Calls the handler when a response says the session is on a different location than the page.
+function checkActiveLocation(current: string | null): void {
+  if (expectedLocation !== undefined && current && current !== expectedLocation) locationChangedHandler?.();
+}
+
+// Which session the page uses: the Staff app sets "staff" so its requests carry the Staff CSRF cookie and the account-kind
+// header (the header only selects the Staff cookie on shared routes; the server decides everything else).
+let accountKind: 'business' | 'staff' = 'business';
+
+// Switches the session kind of this page's requests.
+export function setAccountKind(kind: 'business' | 'staff'): void {
+  accountKind = kind;
+}
+
+// Headers that mark a Staff request.
+function accountHeaders(): Record<string, string> {
+  return accountKind === 'staff' ? { [ACCOUNT_KIND_HEADER]: 'staff' } : {};
+}
+
 // Picks the CSRF cookie that belongs to the session type of the API path.
 function csrfCookieName(path: string): string {
-  return path.startsWith('/super-admin') ? SESSION_COOKIES.superAdmin.csrf : SESSION_COOKIES.businessUser.csrf;
+  if (path.startsWith('/super-admin')) return SESSION_COOKIES.superAdmin.csrf;
+  return accountKind === 'staff' ? SESSION_COOKIES.staff.csrf : SESSION_COOKIES.businessUser.csrf;
 }
 
 // Builds the full same-origin URL, including non-empty query parameters.
@@ -68,11 +105,12 @@ async function readErrorMessages(response: Response): Promise<string[]> {
 
 // Sends one request and returns the typed JSON body (or undefined for "204 No Content").
 export async function apiRequest<T>(method: HttpMethod, path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: 'application/json', ...accountHeaders() };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') {
     const csrf = readCookie(csrfCookieName(path));
     if (csrf) headers[CSRF_HEADER_NAME] = csrf;
+    if (expectedLocation) headers[ACTIVE_LOCATION_HEADER] = expectedLocation;
   }
 
   const response = await fetch(buildUrl(path, options.query), {
@@ -83,6 +121,7 @@ export async function apiRequest<T>(method: HttpMethod, path: string, options: R
     cache: 'no-store',
     signal: options.signal,
   });
+  checkActiveLocation(response.headers.get(ACTIVE_LOCATION_HEADER));
 
   if (!response.ok) {
     const messages = await readErrorMessages(response);
@@ -106,13 +145,16 @@ export function apiUpload<T>(path: string, form: FormData, onProgress?: (percent
     xhr.open('POST', buildUrl(path));
     xhr.withCredentials = true;
     xhr.setRequestHeader('Accept', 'application/json');
+    for (const [name, value] of Object.entries(accountHeaders())) xhr.setRequestHeader(name, value);
     const csrf = readCookie(csrfCookieName(path));
     if (csrf) xhr.setRequestHeader(CSRF_HEADER_NAME, csrf);
+    if (expectedLocation) xhr.setRequestHeader(ACTIVE_LOCATION_HEADER, expectedLocation);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
     };
     xhr.onerror = () => reject(new Error('Network error'));
     xhr.onload = () => {
+      checkActiveLocation(xhr.getResponseHeader(ACTIVE_LOCATION_HEADER));
       let body: { message?: string | string[] } | undefined;
       try {
         body = xhr.responseText ? (JSON.parse(xhr.responseText) as { message?: string | string[] }) : undefined;
@@ -136,7 +178,7 @@ export function apiUpload<T>(path: string, form: FormData, onProgress?: (percent
 // Downloads a protected file (for example an ID document) as a Blob through the same-origin proxy, with the session
 // cookie; the file never gets a public link. Errors become ApiError.
 export async function apiBlob(path: string): Promise<Blob> {
-  const response = await fetch(buildUrl(path), { credentials: 'same-origin', cache: 'no-store' });
+  const response = await fetch(buildUrl(path), { credentials: 'same-origin', cache: 'no-store', headers: accountHeaders() });
   if (!response.ok) {
     const messages = await readErrorMessages(response);
     if (response.status === 401) unauthorizedHandler?.(path);

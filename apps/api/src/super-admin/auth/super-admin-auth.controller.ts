@@ -1,12 +1,12 @@
-// HTTP endpoints for Super Admin login, logout, current profile, and password change (under /api/v1/super-admin/auth).
-import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
+// HTTP endpoints for Super Admin login, logout, current profile, colour theme, and password change (under /api/v1/super-admin/auth).
+import { Body, Controller, Get, HttpCode, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { SESSION_COOKIES, type SuperAdminProfile } from '@hms/shared';
 import type { SuperAdminAuthContext } from '../../auth/auth-context.js';
 import { AllowPendingPasswordChange, CurrentSuperAdmin } from '../../auth/decorators/auth.decorators.js';
-import { ChangePasswordDto, SuperAdminLoginDto } from '../../auth/dto/auth.dto.js';
+import { ChangePasswordDto, SetThemeDto, SuperAdminLoginDto } from '../../auth/dto/auth.dto.js';
 import { clearSessionCookies, setSessionCookies } from '../../auth/session/session-cookies.js';
 import { SessionSettingsService } from '../../auth/session/session-settings.service.js';
 import { deriveCsrfToken } from '../../auth/session/session-tokens.js';
@@ -45,7 +45,17 @@ export class SuperAdminAuthController {
   @ApiCookieAuth(SESSION_COOKIES.superAdmin.session)
   @ApiOperation({ summary: 'Current Super Admin' })
   me(@CurrentSuperAdmin() auth: SuperAdminAuthContext): SuperAdminProfile {
-    return { id: auth.superAdminId, email: auth.email, name: auth.name, mustChangePassword: auth.mustChangePassword };
+    return { id: auth.superAdminId, email: auth.email, name: auth.name, mustChangePassword: auth.mustChangePassword, theme: auth.theme };
+  }
+
+  // Saves the signed-in Super Admin's colour theme (requires the CSRF header).
+  @Put('theme')
+  @HttpCode(204)
+  @UseGuards(SuperAdminSessionGuard)
+  @ApiCookieAuth(SESSION_COOKIES.superAdmin.session)
+  @ApiOperation({ summary: 'Save the colour theme of the current Super Admin' })
+  async setTheme(@CurrentSuperAdmin() auth: SuperAdminAuthContext, @Body() body: SetThemeDto): Promise<void> {
+    await this.authService.setTheme(auth, body.theme);
   }
 
   // Ends the current session and clears the cookies (requires the CSRF header).

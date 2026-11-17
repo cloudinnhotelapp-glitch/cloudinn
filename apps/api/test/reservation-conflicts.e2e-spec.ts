@@ -2,6 +2,7 @@
 // concurrent booking attempts, and that payment history is append-only. Runs only against hotel_management_test.
 import type { INestApplication } from '@nestjs/common';
 import {
+  isConcurrencyConflict,
   isReservationOverlapError,
   PG_CHECK_VIOLATION,
   PG_RESTRICT_VIOLATION,
@@ -72,7 +73,9 @@ describe('Reservation conflict prevention (database)', () => {
       await book(roomId, start, end);
       return 'ok';
     } catch (error) {
-      if (isReservationOverlapError(error)) return 'conflict';
+      // PostgreSQL may report a lost race on the exclusion constraint as a deadlock (40P01) instead of 23P01; either way
+      // this attempt lost and nothing of it was stored.
+      if (isReservationOverlapError(error) || isConcurrencyConflict(error)) return 'conflict';
       throw error;
     }
   }

@@ -13,6 +13,8 @@ async function consoleLogin(page: Page) {
   await page.getByLabel('Password', { exact: true }).fill(consoleAdmin.password);
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page).toHaveURL(/\/super-admin$/);
+  // Signing in loads the console with a full page load (lib/start-fresh.ts); the address changes before it has loaded.
+  await page.waitForLoadState('load');
 }
 
 test.describe('Sign-in pages', () => {
@@ -37,7 +39,7 @@ test.describe('Sign-in pages', () => {
   // sign-in never link to each other.
   test('role login pages have no role tabs and no Super Admin links', async ({ page }, testInfo) => {
     for (const [label, slug] of [['Admin', 'admin'], ['Manager', 'manager'], ['Receptionist', 'receptionist']] as const) {
-      await page.goto(`/login/${slug}?next=%2Froom-status`);
+      await page.goto(`/login/${slug}?next=%2Fproperty%2Ffloors`);
       await expect(page.getByRole('heading', { name: `${label} Login` })).toBeVisible();
       await expect(page.getByRole('navigation', { name: 'Sign-in role' })).toHaveCount(0);
       for (const other of ['admin', 'manager', 'receptionist']) await expect(page.locator(`a[href^="/login/${other}"]`)).toHaveCount(0);
@@ -61,7 +63,9 @@ test.describe('Sign-in pages', () => {
     await page.goto('/login?next=%2Frooms');
     const popup = page.getByRole('dialog', { name: 'Welcome to CloudInn' });
     await expect(popup).toBeVisible();
-    await expect(popup.getByRole('list', { name: 'Choose how you sign in' }).getByRole('link')).toHaveCount(3);
+    await expect(popup.getByRole('list', { name: 'Choose how you sign in' }).getByRole('link')).toHaveCount(4);
+    // The Staff card opens the staff sign-in; a business-app return address does not apply there.
+    await expect(popup.getByRole('link', { name: 'Continue as Staff' })).toHaveAttribute('href', '/login/staff');
     await page.screenshot({ path: testInfo.outputPath('role-popup.png') });
 
     await expect(popup.getByRole('button', { name: 'Close', exact: true })).toHaveCount(0);
@@ -143,11 +147,11 @@ test.describe.serial('List pages', () => {
   // Proves the sidebar uses the reference widths in the console (240px; 72px collapsed).
   test('sidebar is 240px wide and 72px collapsed', async () => {
     const sidebar = page.locator('#console-sidebar');
-    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(240);
+    await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(240);
     await page.getByRole('button', { name: 'Toggle sidebar' }).click();
-    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(72);
+    await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(72);
     await page.getByRole('button', { name: 'Toggle sidebar' }).click();
-    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(240);
+    await expect.poll(async () => (await sidebar.boundingBox())?.width).toBe(240);
   });
 
   // Proves pagination and rows per page load the right records from the API, and that a search returns to page 1.
@@ -250,13 +254,15 @@ test('business sidebar is 240px wide and 72px collapsed', async ({ page }) => {
   await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(72);
 });
 
-// Proves popups scroll inside their rounded card: in a short window the New business popup itself does not scroll (its
+// Proves popups scroll inside their rounded card: in a short window the Add business user popup itself does not scroll (its
 // four rounded corners stay intact), only its body does, and the header and buttons stay visible.
 test('popup content scrolls inside the rounded card', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1024, height: 480 });
+  // (New business is a page now, owner request 2026-11-16; this longer popup is used instead. Its header has a longer
+  // description, so the short window is 560 px instead of 480 px; its body still has to scroll.)
+  await page.setViewportSize({ width: 1024, height: 560 });
   await consoleLogin(page);
-  await page.goto('/super-admin/businesses?add=1');
-  const popup = page.getByRole('dialog', { name: 'New business' });
+  await page.goto('/super-admin/business-users?add=1');
+  const popup = page.getByRole('dialog', { name: 'Add business user' });
   await expect(popup).toBeVisible();
   const shape = await popup.evaluate((dialog) => {
     const body = dialog.querySelector('.ui-scroll') as HTMLElement;
@@ -272,7 +278,7 @@ test('popup content scrolls inside the rounded card', async ({ page }, testInfo)
   expect(shape.bodyScrolls).toBe(true);
   expect(shape.bodyOverflow).toBe('auto');
   expect(new Set(shape.radius)).toEqual(new Set(['16px']));
-  await expect(popup.getByRole('heading', { name: 'New business' })).toBeInViewport();
-  await expect(popup.getByRole('button', { name: 'Create business' })).toBeInViewport();
+  await expect(popup.getByRole('heading', { name: 'Add business user' })).toBeInViewport();
+  await expect(popup.getByRole('button', { name: 'Create user' })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('popup-scroll.png') });
 });
