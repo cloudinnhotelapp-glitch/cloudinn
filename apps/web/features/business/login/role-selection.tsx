@@ -4,18 +4,32 @@
 // owner it has no close button and no footer (no system status or "Maybe later"); Escape still dismisses it and the
 // button behind it reopens it. Choosing a role opens that role's login page and keeps any "?next=" return address; the
 // server still checks the real role at sign-in.
+//
+// First paint (owner report 2026-11-17: the page behind the popup, which looks like a sign-in form, showed first and the
+// popup only a moment later): the popup is part of the server-rendered HTML, drawn open over its own backdrop, and is
+// not held back by reading the address (the page renders it as the Suspense fallback too). Once React has taken over,
+// the same element becomes the native modal before the next paint, so nothing moves.
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { CloudInnLogo } from '@/components/brand/cloudinn-brand';
 import { Icon } from '@/components/ui/icons';
 import { ROLE_OPTIONS, safeNextPath } from './business-roles';
 import { RoleCard, StaffCard } from './role-card';
 
+// Nothing to subscribe to: the value only changes from the server render to the first browser render.
+const subscribe = () => () => {};
+
+// The popup with the return address (?next=) read from the URL; the page shows RoleSelection without it while reading it.
+export function RoleSelectionFromAddress() {
+  return <RoleSelection next={safeNextPath(useSearchParams().get('next'))} />;
+}
+
 // Renders the popup (open when the page loads) and, behind it, a button that reopens it after Escape.
-export function RoleSelection() {
-  const next = safeNextPath(useSearchParams().get('next'));
+export function RoleSelection({ next }: { next: string | null }) {
+  // False on the server and in the first browser render (the HTML the server sent), true once React has taken over.
+  const hydrated = useSyncExternalStore(subscribe, () => true, () => false);
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const [open, setOpen] = useState(true);
@@ -23,9 +37,10 @@ export function RoleSelection() {
   // Opens or closes the native modal dialog when "open" changes (it traps focus, makes the page behind inert, and
   // closes on Escape). The cleanup closes it whenever this page is left or hidden: Next.js keeps visited pages mounted
   // but hidden, and a modal left open would keep blocking the next page.
-  useEffect(() => {
+  // A layout effect, so the server-drawn popup turns into the modal before the browser paints again.
+  useLayoutEffect(() => {
     const dialog = ref.current;
-    if (!dialog) return;
+    if (!dialog || !hydrated) return;
     if (open && !dialog.open) {
       dialog.showModal();
       // Start focus on the popup itself (as in the reference), not on the close button; Tab still reaches every control.
@@ -35,7 +50,7 @@ export function RoleSelection() {
     return () => {
       if (dialog.open) dialog.close();
     };
-  }, [open]);
+  }, [open, hydrated]);
 
   return (
     <>
@@ -48,15 +63,18 @@ export function RoleSelection() {
         Choose your role
       </button>
 
+      {/* Before React takes over: the popup's backdrop, drawn like the modal's own (::backdrop). */}
+      {!hydrated && <div aria-hidden="true" className="role-popup-backdrop fixed inset-0 z-40" />}
       <dialog
         ref={ref}
+        open={hydrated ? undefined : true}
         aria-labelledby={titleId}
         tabIndex={-1}
         onCancel={(event) => {
           event.preventDefault();
           setOpen(false);
         }}
-        className="m-auto max-h-[calc(100vh/var(--app-zoom,1)-2rem)] w-[calc(100%-2rem)] max-w-4xl overflow-hidden rounded-[24px] border border-slate-100 bg-white p-0 text-slate-900 shadow-2xl outline-none role-popup"
+        className={`m-auto max-h-[calc(100vh/var(--app-zoom,1)-2rem)] w-[calc(100%-2rem)] max-w-4xl overflow-hidden rounded-[24px] border border-slate-100 bg-white p-0 text-slate-900 shadow-2xl outline-none role-popup ${hydrated ? '' : 'fixed inset-0 z-50'}`}
       >
         <div className="flex max-h-[calc(100vh/var(--app-zoom,1)-2rem)] flex-col">
           {/* Header (reference: px-6 pt-6 pb-4, bottom hairline), led by the CloudInn logo. */}

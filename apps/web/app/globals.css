@@ -313,7 +313,9 @@ body {
 /* Backdrop behind the business role-selection popup on /login: the same look as the sign-in brand panel (solid
    teal-900 -> teal-800 -> slate-900 gradient, the 14px dot texture, a soft teal glow at the top right and an amber glow
    at the bottom left), covering the whole window. */
-.role-popup::backdrop {
+/* The same backdrop as a plain element, behind the server-drawn popup until the page is interactive. */
+.role-popup::backdrop,
+.role-popup-backdrop {
   background-color: #134e4a;
   background-image:
     radial-gradient(rgb(255 255 255 / 0.07) 1px, transparent 1px),

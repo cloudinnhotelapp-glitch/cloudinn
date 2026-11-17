@@ -26,6 +26,37 @@ async function signIn(page: Page, user: FixtureUser, location: string) {
 }
 
 test.describe('Server rendering and route protection', () => {
+  // Proves the role-selection popup is in the first paint of /login (owner report 2026-11-17: the page behind it, which
+  // looks like a sign-in form, showed first and the popup a moment later). With JavaScript off, the page shows exactly
+  // what the browser paints before the scripts run; then, with JavaScript, the popup is the real modal, Escape closes it.
+  test('shows the role popup in the first paint of the login page', async ({ browser, request, page }) => {
+    const html = await (await request.get('/login?next=%2Fguests')).text();
+    expect(html).toContain('Welcome to CloudInn');
+    expect(html).toMatch(/<dialog[^>]*\sopen=""/);
+
+    const noScript = await browser.newContext({ baseURL: 'http://localhost:3000', javaScriptEnabled: false });
+    const first = await noScript.newPage();
+    await first.goto('/login');
+    const popup = first.getByRole('dialog', { name: 'Welcome to CloudInn' });
+    await expect(popup).toBeVisible();
+    for (const label of ['Admin', 'Manager', 'Receptionist', 'Staff']) await expect(popup.getByRole('link', { name: `Continue as ${label}` })).toBeVisible();
+    // The popup covers the page behind it: what is drawn at the "Choose your role" button is not that button.
+    const behind = (await first.getByRole('button', { name: 'Choose your role' }).boundingBox())!;
+    const onTop = await first.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.textContent ?? '', { x: behind.x + behind.width / 2, y: behind.y + behind.height / 2 });
+    expect(onTop).not.toContain('Choose your role');
+    await noScript.close();
+
+    await page.goto('/login?next=%2Fguests');
+    const modal = page.getByRole('dialog', { name: 'Welcome to CloudInn' });
+    await expect(modal).toBeVisible();
+    await expect.poll(() => modal.evaluate((dialog) => dialog.matches(':modal'))).toBe(true);
+    await expect(modal.getByRole('link', { name: 'Continue as Admin' })).toHaveAttribute('href', '/login/admin?next=%2Fguests');
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+    await page.getByRole('button', { name: 'Choose your role' }).click();
+    await expect(modal).toBeVisible();
+  });
+
   // Proves the proxy protects every route, including the ones it used to miss (guests, reservations, check-out, ...).
   test('redirects visitors without a session at the HTTP level', async ({ request }) => {
     expect(BUSINESS_ROUTES.length).toBeGreaterThan(15);
